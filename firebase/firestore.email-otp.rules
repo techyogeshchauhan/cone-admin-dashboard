@@ -1,0 +1,92 @@
+rules_version = '2';
+
+// OTP production candidate. Not deployed. Requires staging/emulator validation.
+// CONE — Conference Operations & Networking Environment
+//
+//   conference/main             public conference information
+//   people/{email}              one registration per person; role is one of
+//                               presenter, attendee, speaker, vip, organiser,
+//                               volunteer. Written only by the seed tool
+//                               (Admin SDK), never by the app.
+//   couponIndex/{couponId}      coupon -> owner lookup for the meal desk
+//   mealRedemptions/{couponId}  one document = that meal was served. Only
+//                               volunteers/organisers create it; nobody can
+//                               change or delete it, so a coupon works once.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function verifiedEmail() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email_verified == true
+        && request.auth.token.get('login_method', '') == 'email_otp'
+        && request.auth.token.get('login_audience', '') == 'mobile'
+        && request.auth.token.firebase.sign_in_provider == 'custom'
+        && request.auth.token.get('otp_verified_at', 0) * 1000 <= request.time.toMillis()
+        && request.time.toMillis() < (request.auth.token.get('otp_verified_at', 0) + 86400) * 1000
+        && exists(/databases/$(database)/documents/people/$(myEmail()))
+        && get(/databases/$(database)/documents/people/$(myEmail())).data.get('archivedAt', null) == null
+        && get(/databases/$(database)/documents/people/$(myEmail())).data.get('isDemo', false) == false
+        && get(/databases/$(database)/documents/people/$(myEmail())).data.registrationStatus in ['pending', 'confirmed']
+        && (!exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid))
+            || get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.status == 'active');
+    }
+
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function myRole() {
+      return get(/databases/$(database)/documents/people/$(myEmail())).data.role;
+    }
+
+    function hasRole(roles) {
+      return verifiedEmail()
+        && exists(/databases/$(database)/documents/people/$(myEmail()))
+        && myRole() in roles;
+    }
+
+    function isStaff() {
+      return hasRole(['volunteer', 'organiser']);
+    }
+
+    function isOrganiser() {
+      return hasRole(['organiser']);
+    }
+
+    match /conference/{doc} {
+      allow get: if true;
+      allow list, write: if false;
+    }
+
+    match /people/{email} {
+      allow get: if verifiedEmail() && (email == myEmail() || isOrganiser());
+      allow list: if isOrganiser();
+      allow write: if false;
+    }
+
+    match /couponIndex/{couponId} {
+      allow get: if isStaff();
+      allow list, write: if false;
+    }
+
+    match /mealRedemptions/{couponId} {
+      // The owner sees their own coupon's status; staff see any. A coupon not
+      // yet served has no document (resource == null) and reads as "valid".
+      allow get: if isStaff()
+        || (verifiedEmail()
+            && (resource == null || resource.data.participantEmail == myEmail()));
+      allow list: if isOrganiser();
+
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly([
+          'couponId', 'registrationId', 'participantEmail',
+          'meal', 'day', 'redeemedAt', 'redeemedBy'])
+        && request.resource.data.couponId == couponId
+        && request.resource.data.redeemedBy == myEmail()
+        && request.resource.data.redeemedAt == request.time;
+
+      allow update, delete: if false;
+    }
+  }
+}

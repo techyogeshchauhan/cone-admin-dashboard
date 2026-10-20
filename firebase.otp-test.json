@@ -1,0 +1,17 @@
+{
+  "firestore": {
+    "rules": "firebase/firestore.email-otp.rules"
+  },
+  "emulators": {
+    "firestore": {
+      "port": 8189
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true,
+    "auth": {
+      "port": 9199
+    }
+  }
+}

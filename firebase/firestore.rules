@@ -1,0 +1,44 @@
+rules_version = '2';
+// Proposed replacement. Review/test with Flutter and migrate existing coupon
+// slots before deployment. Administrative collections remain server-only.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function verified() { return request.auth != null && request.auth.token.email != null && request.auth.token.email_verified == true; }
+    function email() { return request.auth.token.email.lower(); }
+    function activePerson() {
+      return verified() && exists(/databases/$(database)/documents/people/$(email()))
+        && (!exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid))
+            || get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.status == 'active')
+        && get(/databases/$(database)/documents/people/$(email())).data.registrationStatus == 'confirmed';
+    }
+    function staff() { return activePerson() && get(/databases/$(database)/documents/people/$(email())).data.role in ['organiser','volunteer']; }
+    function organizer() { return activePerson() && get(/databases/$(database)/documents/people/$(email())).data.role == 'organiser'; }
+    match /conference/{id} { allow get: if true; allow list, write: if false; }
+    match /people/{id} { allow get: if verified() && (id == email() || organizer()); allow list: if organizer(); allow write: if false; }
+    match /couponIndex/{id} { allow get: if staff(); allow list, write: if false; }
+    function validRedemption(id) {
+      let coupon = get(/databases/$(database)/documents/couponIndex/$(id)).data;
+      let owner = get(/databases/$(database)/documents/people/$(coupon.email)).data;
+      let slot = get(/databases/$(database)/documents/mealSlots/$(coupon.slotId)).data;
+      return owner.registrationStatus == 'confirmed'
+        && request.resource.data.registrationId == coupon.registrationId
+        && request.resource.data.participantEmail == coupon.email
+        && request.resource.data.meal == coupon.meal
+        && request.resource.data.day == coupon.day
+        && request.time >= timestamp.value(slot.opensAtMs)
+        && request.time <= timestamp.value(slot.closesAtMs);
+    }
+    match /mealRedemptions/{id} {
+      allow get: if staff() || (verified() && (resource == null || resource.data.participantEmail == email()));
+      allow list: if organizer();
+      allow create: if staff()
+        && request.resource.data.keys().hasOnly(['couponId','registrationId','participantEmail','meal','day','redeemedAt','redeemedBy'])
+        && request.resource.data.couponId == id
+        && request.resource.data.redeemedBy == email()
+        && request.resource.data.redeemedAt == request.time
+        && validRedemption(id);
+      allow update, delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

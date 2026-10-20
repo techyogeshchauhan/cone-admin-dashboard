@@ -1,0 +1,183 @@
+.control-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #e9f2e6;
+  border: 1px solid #dce8d5;
+  border-radius: 10px;
+  padding: 20px;
+  margin-bottom: 20px;
+  color: #3c6d3b;
+}
+.control-banner p {
+  font-size: 11px;
+  color: #7e9670;
+  margin: 7px 0 0;
+}
+.control-refresh {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.control-refresh span {
+  font-size: 11px;
+  color: #7e9670;
+  white-space: nowrap;
+}
+/* Compact, clickable variant of the shared Overview KPI card. */
+.control-kpis {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.control-kpis .metric.control-kpi {
+  padding: 12px 14px;
+  gap: 10px;
+  border-radius: 10px;
+}
+.control-kpis .metric.control-kpi .metric-copy {
+  gap: 4px;
+}
+.control-kpis .metric.control-kpi .metric-top {
+  font-size: 12px;
+  gap: 8px;
+}
+.control-kpis .metric.control-kpi .metric-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+.control-kpis .metric.control-kpi .metric-copy small {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+}
+.control-kpis .metric.control-kpi > strong {
+  font-size: 24px;
+}
+.control-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid #dfe8d8;
+  padding-bottom: 12px;
+  margin-bottom: 22px;
+}
+.control-tabs button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: #7e9370;
+  font-size: 11px;
+  padding: 10px 13px;
+}
+.control-tabs button.selected {
+  background: #fff;
+  border-color: #dbe5d3;
+  color: #3e7040;
+  font-weight: 650;
+}
+.control-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+.control-role-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+.control-role-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  background: #f6f9f1;
+  border: 1px solid #e0e8d8;
+  border-radius: 9px;
+  padding: 19px;
+  gap: 10px;
+  min-height: 155px;
+  color: #5c834b;
+}
+.control-role-card:hover {
+  border-color: #93ae80;
+}
+.control-role-card strong {
+  text-transform: capitalize;
+  font-size: 13px;
+}
+.control-role-card span {
+  font-size: 10px;
+  color: #95a28a;
+  line-height: 1.6;
+}
+.control-role-card small {
+  font-size: 9px;
+  color: #80946f;
+  margin-top: auto;
+}
+.control-user-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.control-user-actions button {
+  font-size: 10px;
+  padding: 2px 0;
+}
+.control-test-tag {
+  display: block;
+  color: #8f9b87;
+  margin-top: 7px;
+  font-size: 9px;
+}
+.control-subheading {
+  margin: 25px 0 10px;
+}
+.control-role-modal {
+  max-width: 820px;
+}
+.permission-checkbox {
+  width: 17px;
+  height: 17px;
+  accent-color: #3e764e;
+}
+.workspace-announcement {
+  padding: 13px 17px;
+  border: 1px solid #dce7d4;
+  background: #eef5e7;
+  color: #68805b;
+  font-size: 12px;
+  line-height: 1.7;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  white-space: pre-wrap;
+}
+@media (max-width: 950px) {
+  .control-role-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 550px) {
+  .control-role-grid {
+    grid-template-columns: 1fr;
+  }
+  .control-banner {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .control-tabs button {
+    padding: 9px;
+    font-size: 10px;
+  }
+  .control-refresh {
+    margin-left: 0;
+  }
+  .control-banner > svg {
+    display: none;
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "name": "cone-admin-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "overrides": {
+    "@firebase/app": "0.14.9",
+    "@firebase/app-compat": "0.5.9",
+    "@grpc/grpc-js": "^1.14.6",
+    "uuid": "^11.1.1"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"tsx watch server/index.ts\" \"tsx server/worker.ts\" \"vite --host 127.0.0.1\"",
+    "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
+    "start": "node dist-server/server/index.js",
+    "test": "vitest run",
+    "bootstrap": "tsx server/bootstrap.ts",
+    "setup:admin-test-accounts": "tsx server/setup-admin-test-accounts.ts",
+    "verify:test-accounts": "tsx server/verify-test-accounts.ts",
+    "worker": "tsx server/worker.ts",
+    "worker:production": "node dist-server/server/worker.js",
+    "analyze": "tsx server/analyze.ts",
+    "test:browser": "npm run build && playwright test",
+    "format": "prettier --write src server shared tests browser-tests *.ts *.json",
+    "test:otp-emulators": "firebase emulators:exec --only firestore,auth --project demo-cone-otp --config firebase.otp-test.json \"node --import tsx tests/otp-integration.ts\"",
+    "provision:people": "tsx server/provision-people.ts"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.0.0",
+    "exceljs": "^4.4.0",
+    "express": "^5.0.0",
+    "express-rate-limit": "^8.0.0",
+    "firebase": "^12.10.0",
+    "firebase-admin": "^13.10.0",
+    "helmet": "^8.0.0",
+    "lucide-react": "^0.468.0",
+    "multer": "^2.0.0",
+    "nodemailer": "^10.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "sharp": "^0.35.5",
+    "yauzl": "^3.4.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^7.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/supertest": "^7.2.1",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.0.0",
+    "prettier": "^3.9.10",
+    "supertest": "^7.3.1",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.1.12"
+  }
+}
