@@ -450,37 +450,48 @@ export default function App() {
     applicationName: "CONE",
     announcement: "",
   });
+  // Keeps the signed-in account and workspace settings current: once a
+  // minute, and on returning to the tab at most every 30 seconds. Changing
+  // pages makes no request; access is checked against the loaded account.
   useEffect(() => {
     if (!actor) return;
     let active = true;
-    const refresh = async () => {
+    let last = Date.now();
+    const refresh = async (includeAccount: boolean) => {
+      last = Date.now();
       try {
         const [me, settings] = await Promise.all([
-          request<Actor>("/me"),
+          includeAccount ? request<Actor>("/me") : null,
           request<typeof workspace>("/workspace-settings"),
         ]);
         if (!active) return;
-        setActor(me);
+        if (me) setActor(me);
         if (settings.applicationName) setWorkspace(settings);
-        const entry = navigation.find((n) => n.key === page);
-        if (entry && !can(me, entry.permission))
-          landOn(
-            navigation.find((n) => can(me, n.permission))?.key || "profile",
-          );
       } catch {
         /* A protected page still reports API errors through its existing UI. */
       }
     };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 60000);
-    const focus = () => void refresh();
+    // Sign-in has just loaded the account; only the settings are new here.
+    void refresh(false);
+    const timer = setInterval(() => void refresh(true), 60000);
+    const focus = () => {
+      if (Date.now() - last >= 30000) void refresh(true);
+    };
     window.addEventListener("focus", focus);
     return () => {
       active = false;
       clearInterval(timer);
       window.removeEventListener("focus", focus);
     };
-  }, [actor?.uid, page]);
+  }, [actor?.uid]);
+  useEffect(() => {
+    if (!actor) return;
+    const entry = navigation.find((n) => n.key === page);
+    if (entry && !can(actor, entry.permission))
+      landOn(
+        navigation.find((n) => can(actor, n.permission))?.key || "profile",
+      );
+  }, [actor, page]);
   useEffect(() => {
     if (!auth) {
       setChecking(false);

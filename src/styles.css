@@ -1295,3 +1295,67 @@ pre {
     font-size: 8px;
   }
 }
+.import-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.import-tabs button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: #7e9370;
+  font-size: 12px;
+  padding: 10px 13px;
+}
+.import-tabs button.selected {
+  background: #fff;
+  border-color: #dbe5d3;
+  color: #3e7040;
+  font-weight: 650;
+}
+.metric[aria-pressed="true"] {
+  border-color: currentColor;
+}
+details dl {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  min-width: 260px;
+}
+details dl div {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 8px;
+}
+details dt {
+  color: #7c877e;
+}
+details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.summary-sheet {
+  font-size: 11px;
+}
+.summary-sheet th,
+.summary-sheet td {
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: center;
+  white-space: normal;
+}
+.summary-sheet td:nth-child(2) {
+  text-align: left;
+  min-width: 220px;
+}
+.import-progress {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.import-progress progress {
+  width: 100%;
+  height: 10px;
+}

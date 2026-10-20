@@ -72,10 +72,19 @@ export function BrandingProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => {
     void refresh();
-    const focus = () => void refresh();
+    // Branding rarely changes: check every five minutes, and on returning to
+    // the tab at most once a minute.
+    let last = Date.now();
+    const focus = () => {
+      if (Date.now() - last < 60000) return;
+      last = Date.now();
+      void refresh();
+    };
     const timer = window.setInterval(() => {
-      if (!document.hidden) void refresh();
-    }, 30000);
+      if (document.hidden) return;
+      last = Date.now();
+      void refresh();
+    }, 300000);
     window.addEventListener("focus", focus);
     return () => {
       clearInterval(timer);
