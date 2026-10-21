@@ -59,6 +59,7 @@ import ConferenceEditor from "./ConferenceEditor";
 import InviteUser from "./InviteUser";
 const ImportCenter = lazy(() => import("./ImportCenter"));
 import MfaEnrollment from "./MfaEnrollment";
+import { LoadMore, useDebounced, useNearScreen, usePagedList } from "./paging";
 import SearchBox, { matchesSearch, NoMatches } from "./SearchBox";
 import RoleWorkspace, {
   roleDesign,
@@ -450,37 +451,48 @@ export default function App() {
     applicationName: "CONE",
     announcement: "",
   });
+  // Keeps the signed-in account and workspace settings current: once a
+  // minute, and on returning to the tab at most every 30 seconds. Changing
+  // pages makes no request; access is checked against the loaded account.
   useEffect(() => {
     if (!actor) return;
     let active = true;
-    const refresh = async () => {
+    let last = Date.now();
+    const refresh = async (includeAccount: boolean) => {
+      last = Date.now();
       try {
         const [me, settings] = await Promise.all([
-          request<Actor>("/me"),
+          includeAccount ? request<Actor>("/me") : null,
           request<typeof workspace>("/workspace-settings"),
         ]);
         if (!active) return;
-        setActor(me);
+        if (me) setActor(me);
         if (settings.applicationName) setWorkspace(settings);
-        const entry = navigation.find((n) => n.key === page);
-        if (entry && !can(me, entry.permission))
-          landOn(
-            navigation.find((n) => can(me, n.permission))?.key || "profile",
-          );
       } catch {
         /* A protected page still reports API errors through its existing UI. */
       }
     };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 60000);
-    const focus = () => void refresh();
+    // Sign-in has just loaded the account; only the settings are new here.
+    void refresh(false);
+    const timer = setInterval(() => void refresh(true), 60000);
+    const focus = () => {
+      if (Date.now() - last >= 30000) void refresh(true);
+    };
     window.addEventListener("focus", focus);
     return () => {
       active = false;
       clearInterval(timer);
       window.removeEventListener("focus", focus);
     };
-  }, [actor?.uid, page]);
+  }, [actor?.uid]);
+  useEffect(() => {
+    if (!actor) return;
+    const entry = navigation.find((n) => n.key === page);
+    if (entry && !can(actor, entry.permission))
+      landOn(
+        navigation.find((n) => can(actor, n.permission))?.key || "profile",
+      );
+  }, [actor, page]);
   useEffect(() => {
     if (!auth) {
       setChecking(false);
@@ -1390,54 +1402,31 @@ function Records({
 }) {
   const [deleting, setDeleting] = useState<string>();
   const [success, setSuccess] = useState("");
-  const [rows, setRows] = useState<Row[]>([]),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState(""),
+  const [actionError, setError] = useState(""),
     [search, setSearch] = useState(""),
-    [selected, setSelected] = useState<Row | null | undefined>(),
-    [next, setNext] = useState<string | null>(null);
-  async function load(after?: string) {
-    setLoading(true);
-    setError("");
-    try {
-      const query = new URLSearchParams();
-      if (after) query.set("after", after);
-      if (module === "participants") {
-        if (participantFilter.role) query.set("role", participantFilter.role);
-        if (participantFilter.status)
-          query.set("status", participantFilter.status);
-        if (participantFilter.excludeDemo) query.set("excludeDemo", "true");
-      }
-      const data = await request<{ rows: Row[]; next: string | null }>(
-        `/records/${module}${query.size ? `?${query}` : ""}`,
-      );
-      setRows((old) => (after ? [...old, ...data.rows] : data.rows));
-      setNext(data.next);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, [
-    module,
-    participantFilter.role,
-    participantFilter.status,
-    participantFilter.excludeDemo,
-  ]);
+    [selected, setSelected] = useState<Row | null | undefined>();
+  // Searched on the server across every record, a page at a time.
+  const q = useDebounced(search.trim());
+  const list = usePagedList<Row>(`/records/${module}`, {
+    q: q.length >= 2 ? q : undefined,
+    ...(module === "participants"
+      ? {
+          role: participantFilter.role,
+          status: participantFilter.status,
+          excludeDemo: participantFilter.excludeDemo ? "true" : undefined,
+        }
+      : {}),
+  });
+  const { rows, next, loading } = list;
+  const error = actionError || list.error;
+  const load = list.reload;
   const columns =
     module === "participants"
       ? ["fullName", "email", "role", "registrationStatus"]
       : module === "users"
         ? ["fullName", "email", "accessRole", "status"]
         : fields[module].slice(0, 4).map((f) => f.key);
-  const filtered = rows.filter((r) =>
-    Object.values(r).some((v) =>
-      String(v).toLowerCase().includes(search.toLowerCase()),
-    ),
-  );
+  const filtered = rows;
   return (
     <>
       <Message error={error} />
@@ -1451,13 +1440,21 @@ function Records({
           <div className="search">
             <Search size={18} />
             <input
-              aria-label="Search loaded records"
-              placeholder="Search loaded records…"
+              aria-label={`Search ${module === "participants" ? "participants by name, email or mobile" : "records"}`}
+              placeholder={
+                module === "participants" || module === "users"
+                  ? "Search by name, email or mobile…"
+                  : "Search records…"
+              }
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <span className="record-count">{rows.length} loaded</span>
+          <span className="record-count" aria-live="polite">
+            {loading && !rows.length
+              ? "Loading…"
+              : `${rows.length}${next ? "+" : ""} ${q.length >= 2 ? "found" : "shown"}`}
+          </span>
           {module === "participants" &&
             Object.keys(participantFilter).length > 0 && (
               <div className="filter-summary" role="status">
@@ -1587,6 +1584,8 @@ function Records({
                 : undefined
             }
           />
+        ) : q.length >= 2 ? (
+          <NoMatches what="records" query={q} />
         ) : (
           <Empty
             description={
@@ -1596,15 +1595,7 @@ function Records({
             }
           />
         )}
-        {next && (
-          <button
-            className="secondary load-more"
-            disabled={loading}
-            onClick={() => void load(next)}
-          >
-            Load more
-          </button>
-        )}
+        <LoadMore next={next} loading={loading} onLoad={list.loadMore} />
       </section>
       {module === "users" && <InviteUser />}
       {module === "meals" && <CouponTools />}
@@ -1791,21 +1782,14 @@ function download(blob: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function Media() {
-  const [rows, setRows] = useState<Row[]>([]),
-    [error, setError] = useState(""),
+  const list = usePagedList<Row>("/media");
+  const [actionError, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [query, setQuery] = useState("");
+  const { rows } = list;
+  const error = actionError || list.error;
+  const load = list.reload;
   const shown = rows.filter((row) => matchesSearch(query, row.name));
-  async function load() {
-    try {
-      setRows(await request<Row[]>("/media"));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  useEffect(() => {
-    void load();
-  }, []);
   return (
     <>
       <Message error={error} />
@@ -1869,7 +1853,14 @@ function Media() {
               ))}
             </div>
             {!shown.length && <NoMatches what="images" query={query} />}
+            <LoadMore
+              next={list.next}
+              loading={list.loading}
+              onLoad={list.loadMore}
+            />
           </>
+        ) : list.loading ? (
+          <Loading />
         ) : (
           <Empty
             title="Your media library is ready"
@@ -1883,7 +1874,11 @@ function Media() {
 function MediaCard({ row, onArchived }: { row: Row; onArchived: () => void }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
+  // Each image is a private download: fetch it only once it can be seen.
+  const card = useRef<HTMLDivElement>(null);
+  const near = useNearScreen(card);
   useEffect(() => {
+    if (!near) return;
     let active = true;
     let objectUrl = "";
     request<Blob>(`/media/${row.id}/file`)
@@ -1896,9 +1891,9 @@ function MediaCard({ row, onArchived }: { row: Row; onArchived: () => void }) {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [row.id]);
+  }, [row.id, near]);
   return (
-    <div className="media-card">
+    <div className="media-card" ref={card}>
       {url ? <img src={url} alt={String(row.name)} /> : <Image size={28} />}
       <strong>{label(row.name)}</strong>
       <small>Private · VPS storage</small>
@@ -2104,14 +2099,11 @@ function LogTable({
 }: {
   endpoint: "audit" | "analysis" | "imports" | "redemptions";
 }) {
-  const [rows, setRows] = useState<Row[] | null>(null),
-    [error, setError] = useState(""),
-    [query, setQuery] = useState("");
-  useEffect(() => {
-    request<Row[]>(`/${endpoint}`)
-      .then(setRows)
-      .catch((e) => setError(e.message));
-  }, [endpoint]);
+  // Newest first, a page at a time; more load as the list is scrolled.
+  const list = usePagedList<Row>(`/${endpoint}`);
+  const [query, setQuery] = useState("");
+  const rows = list.loaded ? list.rows : null;
+  const error = list.error;
   const columns =
     endpoint === "audit"
       ? ["actorName", "action", "target", "createdAt"]
@@ -2135,7 +2127,10 @@ function LogTable({
                 ? "Import history"
                 : "Meal redemption history"}
         </h2>
-        <span className="record-count">Up to 100 records</span>
+        <span className="record-count">
+          {list.rows.length}
+          {list.next ? "+" : ""} loaded · newest first
+        </span>
       </div>
       <Message error={error} />
       {rows ? (
@@ -2158,6 +2153,11 @@ function LogTable({
             />
             <Table rows={shownRows} columns={columns} />
             {!shownRows.length && <NoMatches what="records" query={query} />}
+            <LoadMore
+              next={list.next}
+              loading={list.loading}
+              onLoad={list.loadMore}
+            />
           </>
         ) : (
           <Empty

@@ -16,7 +16,7 @@ vi.mock("../server/mail.js", () => ({
   mailTransport: m.mailTransport,
   sender: m.sender,
 }));
-import { tick } from "../server/worker.js";
+import { nextDue, tick } from "../server/worker.js";
 describe("SMTP email worker", () => {
   let update: ReturnType<typeof vi.fn>;
   beforeEach(() => {
@@ -81,5 +81,34 @@ describe("SMTP email worker", () => {
       expect.objectContaining({ status: "retry", error: "EAUTH" }),
     );
     expect(JSON.stringify(update.mock.calls)).not.toContain("sensitive");
+  });
+});
+describe("when the email worker wakes", () => {
+  const now = Date.parse("2026-10-21T10:00:00.000Z");
+  it("sleeps while nothing is waiting", () => {
+    expect(nextDue([], now)).toBeNull();
+  });
+  it("sends queued emails at once and retries when they fall due", () => {
+    expect(nextDue([{ status: "queued" }], now)).toBe(0);
+    expect(
+      nextDue(
+        [{ status: "retry", nextAttemptAt: "2026-10-21T10:05:00.000Z" }],
+        now,
+      ),
+    ).toBe(300000);
+  });
+  it("takes over an abandoned job when its lease ends", () => {
+    expect(
+      nextDue(
+        [
+          { status: "processing", leaseUntil: "2026-10-21T10:02:00.000Z" },
+          { status: "retry", nextAttemptAt: "2026-10-21T11:00:00.000Z" },
+        ],
+        now,
+      ),
+    ).toBe(120000);
+  });
+  it("treats an unreadable time as due now", () => {
+    expect(nextDue([{ status: "retry", nextAttemptAt: "soon" }], now)).toBe(0);
   });
 });

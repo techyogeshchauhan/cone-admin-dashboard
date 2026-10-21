@@ -10,6 +10,7 @@ import {
 } from "../shared/email-templates";
 import SearchBox, { matchesSearch, NoMatches } from "./SearchBox";
 import SmtpSettings from "./SmtpSettings";
+import { LoadMore, usePagedList } from "./paging";
 type Template = {
   id: string;
   name: string;
@@ -46,7 +47,6 @@ export default function EmailCenter({
   isSuperAdmin?: boolean;
 }) {
   const [templates, setTemplates] = useState<Template[]>([]),
-    [jobs, setJobs] = useState<Job[]>([]),
     [error, setError] = useState(""),
     [note, setNote] = useState(""),
     [busy, setBusy] = useState(false),
@@ -85,7 +85,8 @@ export default function EmailCenter({
     setError("");
     setNote("");
     try {
-      const query = new URLSearchParams({ excludeDemo: "true" });
+      // One batch is the largest page the API serves.
+      const query = new URLSearchParams({ excludeDemo: "true", limit: "100" });
       if (audience !== "all") query.set("role", audience);
       const page = await request<{ rows: Person[]; next: string | null }>(
         `/records/participants?${query}`,
@@ -99,7 +100,7 @@ export default function EmailCenter({
       setLoaded(people);
       setRecipients(people.map((p) => p.email).join("\n"));
       setNote(
-        `${people.length} ${roleNames[audience].toLowerCase()} added as recipients${page.next ? " (first 50 only; queue the rest in another batch)" : ""}.`,
+        `${people.length} ${roleNames[audience].toLowerCase()} added as recipients${page.next ? " (first ${page.rows.length} only; queue the rest in another batch)" : ""}.`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -107,19 +108,17 @@ export default function EmailCenter({
       setBusy(false);
     }
   }
+  // Delivery history, newest first, a page at a time.
+  const jobList = usePagedList<Job>("/email/jobs");
+  const jobs = jobList.rows;
   const shownJobs = jobs.filter((j) =>
     matchesSearch(query, j.recipient, j.status, j.createdAt),
   );
   useEffect(() => {
-    Promise.all([
-      request<Template[]>("/email/templates"),
-      request<Job[]>("/email/jobs"),
-    ])
-      .then(([a, b]) => {
-        setTemplates(a);
-        setJobs(b);
-      })
+    request<Template[]>("/email/templates")
+      .then(setTemplates)
       .catch((e) => setError(e.message));
+    if (revision) void jobList.reload();
   }, [revision]);
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -377,6 +376,12 @@ export default function EmailCenter({
           {jobs.length > 0 && !shownJobs.length && (
             <NoMatches what="deliveries" query={query} />
           )}
+          {jobList.error && <p className="message">{jobList.error}</p>}
+          <LoadMore
+            next={jobList.next}
+            loading={jobList.loading}
+            onLoad={jobList.loadMore}
+          />
         </div>
       </section>
     </>

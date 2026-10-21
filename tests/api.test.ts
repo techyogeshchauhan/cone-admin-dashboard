@@ -34,6 +34,36 @@ describe("API authorization before administrative writes", () => {
     }));
   });
   afterEach(() => vi.clearAllMocks());
+  it("lets the built dashboard reach Firebase Auth and reCAPTCHA but nothing else", async () => {
+    const csp = (await api.get("/api/health")).headers[
+      "content-security-policy"
+    ];
+    const connect = /connect-src ([^;]+)/.exec(csp)![1].split(" ");
+    expect(connect).toEqual([
+      "'self'",
+      "https://identitytoolkit.googleapis.com",
+      "https://securetoken.googleapis.com",
+      "https://www.google.com/recaptcha/",
+    ]);
+    expect(csp).toContain(
+      "script-src 'self' https://www.google.com/recaptcha/",
+    );
+    expect(csp).toContain("object-src 'none'");
+  });
+  it("reports a used-up Firebase quota on any page instead of a generic error", async () => {
+    mocks.doc.mockImplementation(() => ({
+      get: vi.fn().mockRejectedValue(
+        Object.assign(new Error("8 RESOURCE_EXHAUSTED: Quota exceeded."), {
+          code: 8,
+        }),
+      ),
+    }));
+    const response = await api
+      .get("/api/me")
+      .set("Authorization", "Bearer token");
+    expect(response.status).toBe(503);
+    expect(response.body.error).toMatch(/daily quota is used up/);
+  });
   it("permits a basic liveness check without Firebase credentials", async () => {
     expect((await api.get("/api/health")).status).toBe(200);
     expect(mocks.verify).not.toHaveBeenCalled();

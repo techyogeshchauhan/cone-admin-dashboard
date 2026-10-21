@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { auth, db } from "./firebase.js";
+import { personSearchKeys } from "../shared/search.js";
 
 export function developmentVerificationBypass() {
   return (
@@ -55,6 +56,7 @@ export async function ensurePerson(
         email: identity.email,
         fullName: identity.fullName,
         mobile: identity.mobile,
+        searchKeys: personSearchKeys(identity),
         version: (old.data()?.version || 0) + 1,
         updatedAt: new Date().toISOString(),
         updatedBy: actorUid,
@@ -76,6 +78,7 @@ export async function ensureParticipantAccess(
     if (!existing.exists)
       tx.create(ref, {
         ...identity,
+        searchKeys: personSearchKeys(identity),
         accessRole: "participant",
         conferenceId: "main",
         status: "active",

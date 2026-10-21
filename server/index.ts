@@ -42,6 +42,24 @@ import {
 } from "./mail.js";
 import { encryptSecret } from "./secrets.js";
 import { readWorkbook } from "./workbook.js";
+import { clearRequestCaches, memo } from "./request-cache.js";
+import { firebaseOutage } from "./firebase-errors.js";
+import { pageSize, readPage } from "./pagination.js";
+import {
+  matchesTerms,
+  personSearchKeys,
+  searchTerms,
+} from "../shared/search.js";
+import {
+  problemColumns,
+  problemFields,
+} from "../shared/registration-columns.js";
+import {
+  importOptions,
+  parseRegistrationWorkbook,
+  type SummarySheet,
+  type WorkbookRow,
+} from "./registration-workbook.js";
 import {
   personVariables,
   renderTemplate,
@@ -75,8 +93,35 @@ if (
 )
   throw new Error("Production requires MFA and live Firebase services");
 await mkdir(storage, { recursive: true });
+// The built dashboard signs in with Firebase Auth from the browser, and Super
+// Admin MFA verifies a phone number with reCAPTCHA. Everything else stays
+// same-origin under helmet's defaults.
+const authDomain = process.env.VITE_FIREBASE_AUTH_DOMAIN;
 app.use(
-  helmet(),
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        "connect-src": [
+          "'self'",
+          "https://identitytoolkit.googleapis.com",
+          "https://securetoken.googleapis.com",
+          "https://www.google.com/recaptcha/",
+        ],
+        "script-src": [
+          "'self'",
+          "https://www.google.com/recaptcha/",
+          "https://www.gstatic.com/recaptcha/",
+          "https://apis.google.com",
+        ],
+        "frame-src": [
+          "'self'",
+          "https://www.google.com/recaptcha/",
+          "https://recaptcha.google.com/recaptcha/",
+          ...(authDomain ? [`https://${authDomain}`] : []),
+        ],
+      },
+    },
+  }),
   cors({
     origin: (process.env.CORS_ALLOWED_ORIGINS || "http://localhost:3000").split(
       ",",
@@ -140,6 +185,61 @@ registerEmailOtp(app);
 registerTestingVerification(app);
 registerDevRoleLogin(app);
 registerMobileSelfie(app, storage);
+// Any write may change access, roles or runtime switches: forget cached ones.
+app.use("/api", (req, res, next) => {
+  if (req.method !== "GET") res.on("finish", clearRequestCaches);
+  next();
+});
+const sessions = memo<Actor & { expiresAt: number }>();
+async function resolveSession(token: string) {
+  const decoded = await auth.verifyIdToken(token, true);
+  if (decoded.login_audience === "mobile")
+    fail(
+      "This session is for the mobile application. Use the dashboard sign-in.",
+      403,
+    );
+  if (!decoded.email_verified) fail("Verify your email before signing in", 403);
+  const snapshot = await db.doc(`adminUsers/${decoded.uid}`).get();
+  const user = snapshot.data();
+  if (
+    !user ||
+    user.status !== "active" ||
+    typeof user.accessRole !== "string" ||
+    !/^[a-z][a-z0-9_]{2,40}$/.test(user.accessRole)
+  )
+    fail("No active dashboard account. Ask your Super Admin for access.", 403);
+  const definition =
+    user.accessRole === "superadmin"
+      ? undefined
+      : (await db.doc(`roleDefinitions/${user.accessRole}`).get()).data();
+  const effectivePermissions = resolveRole(user.accessRole, definition);
+  if (effectivePermissions === null)
+    fail("Your assigned dashboard role is inactive or unavailable", 403);
+  const developmentTestLogin = allowAdminTestLogin(user, decoded);
+  if (user.isTestAccount && !developmentTestLogin)
+    fail(
+      "Dashboard test accounts are restricted to explicitly enabled local development.",
+      403,
+    );
+  if (
+    !developmentTestLogin &&
+    process.env.REQUIRE_ADMIN_MFA !== "false" &&
+    user.accessRole === "superadmin" &&
+    !decoded.firebase.sign_in_second_factor
+  )
+    fail("Super Admin sign-in requires an enrolled second factor", 403);
+  return {
+    uid: decoded.uid,
+    email: decoded.email!,
+    fullName: user.fullName,
+    role: user.accessRole,
+    conferenceId: user.conferenceId,
+    status: user.status,
+    authTime: decoded.auth_time,
+    permissions: effectivePermissions,
+    expiresAt: decoded.exp * 1000,
+  };
+}
 app.use("/api", async (req: Request, _res, next) => {
   try {
     const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
@@ -147,56 +247,12 @@ app.use("/api", async (req: Request, _res, next) => {
       return next(
         Object.assign(new Error("Sign in to continue"), { status: 401 }),
       );
-    const decoded = await auth.verifyIdToken(token, true);
-    if (decoded.login_audience === "mobile")
-      fail(
-        "This session is for the mobile application. Use the dashboard sign-in.",
-        403,
-      );
-    if (!decoded.email_verified)
-      fail("Verify your email before signing in", 403);
-    const snapshot = await db.doc(`adminUsers/${decoded.uid}`).get();
-    const user = snapshot.data();
-    if (
-      !user ||
-      user.status !== "active" ||
-      typeof user.accessRole !== "string" ||
-      !/^[a-z][a-z0-9_]{2,40}$/.test(user.accessRole)
-    )
-      fail(
-        "No active dashboard account. Ask your Super Admin for access.",
-        403,
-      );
-    const definition =
-      user.accessRole === "superadmin"
-        ? undefined
-        : (await db.doc(`roleDefinitions/${user.accessRole}`).get()).data();
-    const effectivePermissions = resolveRole(user.accessRole, definition);
-    if (effectivePermissions === null)
-      fail("Your assigned dashboard role is inactive or unavailable", 403);
-    const developmentTestLogin = allowAdminTestLogin(user, decoded);
-    if (user.isTestAccount && !developmentTestLogin)
-      fail(
-        "Dashboard test accounts are restricted to explicitly enabled local development.",
-        403,
-      );
-    if (
-      !developmentTestLogin &&
-      process.env.REQUIRE_ADMIN_MFA !== "false" &&
-      user.accessRole === "superadmin" &&
-      !decoded.firebase.sign_in_second_factor
-    )
-      fail("Super Admin sign-in requires an enrolled second factor", 403);
-    req.actor = {
-      uid: decoded.uid,
-      email: decoded.email!,
-      fullName: user.fullName,
-      role: user.accessRole,
-      conferenceId: user.conferenceId,
-      status: user.status,
-      authTime: decoded.auth_time,
-      permissions: effectivePermissions,
-    };
+    const { expiresAt: _expiry, ...actor } = await sessions(
+      createHash("sha256").update(token).digest("hex"),
+      () => resolveSession(token),
+      (session) => session.expiresAt,
+    );
+    req.actor = { ...actor, permissions: [...(actor.permissions || [])] };
     next();
   } catch (error) {
     next(error);
@@ -204,14 +260,22 @@ app.use("/api", async (req: Request, _res, next) => {
 });
 app.get("/api/me", (req, res) => res.json(actorOf(req)));
 
-app.use("/api", async (req, _res, next) => {
+const switches = memo<{
+  maintenanceMode: boolean;
+  runtime: Awaited<ReturnType<typeof runtimeConfiguration>>;
+}>();
+app.use("/api", async (req, res, next) => {
   try {
-    if (
-      actorOf(req).role !== "superadmin" &&
-      (await db.doc("applicationSettings/main").get()).data()?.maintenanceMode
-    )
+    const { maintenanceMode, runtime } = await switches("gate", async () => {
+      const [main, runtime] = await Promise.all([
+        db.doc("applicationSettings/main").get(),
+        runtimeConfiguration(),
+      ]);
+      return { maintenanceMode: !!main.data()?.maintenanceMode, runtime };
+    });
+    if (actorOf(req).role !== "superadmin" && maintenanceMode)
       fail("The dashboard is temporarily under maintenance", 503);
-    const runtime = await runtimeConfiguration();
+    res.locals.runtime = runtime;
     if (
       typeof actorOf(req).authTime === "number" &&
       Date.now() / 1000 - actorOf(req).authTime! >
@@ -261,7 +325,8 @@ app.use("/api/control", controlRouter);
 registerBrandingAdmin(app, storage);
 registerSelfieAdmin(app, storage);
 app.get("/api/workspace-settings", async (_req, res) => {
-  const config = await runtimeConfiguration();
+  const config: Awaited<ReturnType<typeof runtimeConfiguration>> =
+    res.locals.runtime ?? (await runtimeConfiguration());
   res.json({
     applicationName: config.applicationName,
     announcement: config.announcement,
@@ -299,20 +364,30 @@ app.get("/api/profile", async (req, res) => {
     ),
   });
 });
-app.get("/api/overview", async (req, res) => {
-  requirePermission(req, "reports");
+// Counting registrations reads every participant, so the result is kept for
+// a short while; any change made through the API clears it.
+const overviews = memo<Record<string, unknown>>();
+async function overview(withActivity: boolean) {
   const [people, redemptions, imports, activity] = await Promise.all([
-    db.collection("people").get(),
+    db
+      .collection("people")
+      .select("isDemo", "archivedAt", "registrationStatus", "role")
+      .get(),
     db.collection("mealRedemptions").count().get(),
-    db.collection("importJobs").orderBy("createdAt", "desc").limit(5).get(),
-    can(actorOf(req), "audit", "read")
+    db
+      .collection("importJobs")
+      .orderBy("createdAt", "desc")
+      .select("fileName", "status", "total", "createdAt", "kind")
+      .limit(5)
+      .get(),
+    withActivity
       ? db.collection("auditLogs").orderBy("createdAt", "desc").limit(8).get()
       : Promise.resolve(null),
   ]);
   const rows = people.docs
     .map((d) => d.data())
     .filter((d) => !d.isDemo && !d.archivedAt);
-  res.json({
+  return {
     registrations: rows.length,
     confirmed: rows.filter((p) => p.registrationStatus === "confirmed").length,
     presenters: rows.filter((p) => p.role === "presenter").length,
@@ -331,7 +406,16 @@ app.get("/api/overview", async (req, res) => {
         target: d.data().target || "Application",
         createdAt: d.data().createdAt,
       })) || [],
-  });
+  };
+}
+app.get("/api/overview", async (req, res) => {
+  requirePermission(req, "reports");
+  const withActivity = can(actorOf(req), "audit", "read");
+  res.json(
+    await overviews(withActivity ? "activity" : "counts", () =>
+      overview(withActivity),
+    ),
+  );
 });
 app.get("/api/conference", async (req, res) => {
   requirePermission(req, "conference");
@@ -424,16 +508,26 @@ app.put("/api/settings/smtp", async (req, res) => {
   await audit(actorOf(req), "smtp.update", "configuration");
   res.json(await publicSmtpConfiguration());
 });
-for (const [route, collection, permission] of [
-  ["audit", "auditLogs", "audit"],
-  ["analysis", "analysisReports", "analysis"],
-  ["imports", "importJobs", "imports"],
-  ["redemptions", "mealRedemptions", "redemptions"],
+// Cursor of the previous page: the id of its last document.
+const cursorOf = (value: unknown) =>
+  typeof value === "string" && value ? safeId(value) : undefined;
+// Activity-style lists, newest first, a page at a time.
+for (const [route, collection, permission, newest] of [
+  ["audit", "auditLogs", "audit", "createdAt"],
+  ["analysis", "analysisReports", "analysis", "generatedAt"],
+  ["imports", "importJobs", "imports", "createdAt"],
+  ["redemptions", "mealRedemptions", "redemptions", "redeemedAt"],
 ] as const) {
   app.get(`/api/${route}`, async (req, res) => {
     requirePermission(req, permission);
-    const rows = await db.collection(collection).limit(100).get();
-    res.json(rows.docs.map((d) => ({ id: d.id, ...d.data() })));
+    res.json(
+      await readPage({
+        query: db.collection(collection).orderBy(newest, "desc"),
+        collection,
+        limit: pageSize(req.query.limit),
+        after: cursorOf(req.query.after),
+      }),
+    );
   });
 }
 app.get("/api/records/:module", async (req, res) => {
@@ -441,42 +535,61 @@ app.get("/api/records/:module", async (req, res) => {
     .enum(Object.keys(schemas) as [Module, ...Module[]])
     .parse(req.params.module);
   requirePermission(req, module);
-  let query = db
-    .collection(collectionNames[module])
-    .orderBy("__name__")
-    .limit(50);
+  const collection = collectionNames[module];
+  const terms = searchTerms(req.query.q);
+  const keep: ((data: Record<string, unknown>) => boolean)[] = [
+    (d) => !d.archivedAt,
+  ];
+  let query: FirebaseFirestore.Query = db
+    .collection(collection)
+    .orderBy("__name__");
+  // People and dashboard accounts are found through their search keys;
+  // the other modules are small and are matched while they are read.
+  const keyed = module === "participants" || module === "users";
+  if (terms.length && keyed) {
+    const lookup = [...terms].sort((a, b) => b.length - a.length)[0];
+    query = query.where("searchKeys", "array-contains", lookup);
+    keep.push((d) => matchesTerms(d.searchKeys, terms));
+  } else if (terms.length)
+    keep.push((d) =>
+      terms.every((term) =>
+        Object.values(d).some(
+          (v) =>
+            ["string", "number"].includes(typeof v) &&
+            String(v).toLowerCase().includes(term),
+        ),
+      ),
+    );
   if (module === "participants") {
-    if (req.query.role)
-      query = query.where(
-        "role",
-        "==",
-        z.enum(conferenceRoles).parse(req.query.role),
-      );
-    if (req.query.status)
-      query = query.where(
-        "registrationStatus",
-        "==",
-        z
+    const role = req.query.role
+      ? z.enum(conferenceRoles).parse(req.query.role)
+      : null;
+    const status = req.query.status
+      ? z
           .enum(["pending", "confirmed", "cancelled", "suspended"])
-          .parse(req.query.status),
-      );
+          .parse(req.query.status)
+      : null;
+    // With a search the key lookup is the indexed filter; these then apply
+    // in memory, so no composite index is needed.
+    if (role)
+      if (terms.length) keep.push((d) => d.role === role);
+      else query = query.where("role", "==", role);
+    if (status)
+      if (terms.length) keep.push((d) => d.registrationStatus === status);
+      else query = query.where("registrationStatus", "==", status);
+    if (req.query.excludeDemo === "true") keep.push((d) => !d.isDemo);
   }
-  const rows = await (
-    req.query.after ? query.startAfter(safeId(req.query.after)) : query
-  ).get();
+  const page = await readPage({
+    query,
+    collection,
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+    byId: true,
+    keep: (d) => keep.every((test) => test(d)),
+  });
   res.json({
-    rows: rows.docs
-      .filter(
-        (d) =>
-          !d.data().archivedAt &&
-          !(
-            module === "participants" &&
-            req.query.excludeDemo === "true" &&
-            d.data().isDemo
-          ),
-      )
-      .map((d) => ({ id: d.id, ...d.data() })),
-    next: rows.size === 50 ? rows.docs.at(-1)!.id : null,
+    ...page,
+    rows: page.rows.map(({ searchKeys: _keys, ...row }) => row),
   });
 });
 app.post("/api/records/:module", async (req, res) => {
@@ -717,6 +830,9 @@ app.post("/api/records/:module", async (req, res) => {
       {
         ...extras,
         ...data,
+        ...(module === "participants"
+          ? { searchKeys: personSearchKeys(data) }
+          : {}),
         version: (old.data()?.version || 0) + 1,
         updatedAt: new Date().toISOString(),
         updatedBy: actor.uid,
@@ -1001,6 +1117,7 @@ app.post("/api/imports/:id/commit", async (req, res) => {
             });
           tx.update(person, {
             ...data,
+            searchKeys: personSearchKeys(data),
             version: (old.data()!.version || 1) + 1,
             lastImportJobId: id,
             updatedAt: new Date().toISOString(),
@@ -1009,6 +1126,7 @@ app.post("/api/imports/:id/commit", async (req, res) => {
         } else
           tx.create(person, {
             ...data,
+            searchKeys: personSearchKeys(data),
             registrationId: `CONE-${randomUUID()}`,
             passId: `PASS-${randomUUID()}`,
             coupons: [],
@@ -1044,6 +1162,535 @@ app.post("/api/imports/:id/commit", async (req, res) => {
     throw error;
   }
 });
+// Whole registration workbook: every discipline sheet at once, header row and
+// column spellings detected per sheet. Nothing is written until commit.
+app.post(
+  "/api/imports/workbook/preview",
+  upload.single("file"),
+  async (req, res) => {
+    requirePermission(req, "imports");
+    if (!req.file || !req.file.originalname.toLowerCase().endsWith(".xlsx"))
+      fail("Upload an .xlsx workbook");
+    const options = importOptions.parse({
+      defaultRole: req.body.defaultRole || undefined,
+      registrationStatus: req.body.registrationStatus || undefined,
+    });
+    const mode = z.enum(["create", "update"]).parse(req.body.mode || "create");
+    const { sheets, rows, summaries } = parseRegistrationWorkbook(
+      await readWorkbook(req.file.buffer),
+      options,
+    );
+    if (!rows.length)
+      fail(
+        "No participant rows found. Each sheet needs a header row with Name of Author and Email columns.",
+      );
+    const count = (status: string) =>
+      rows.filter((r) => r.status === status).length;
+    const id = randomUUID();
+    await writeFile(
+      path.join(storage, `import-${id}.json`),
+      JSON.stringify({ rows, summaries }),
+    );
+    await db.doc(`importJobs/${id}`).create({
+      kind: "registrationWorkbook",
+      summarySheets: summaries.map((s) => s.sheet),
+      fileName: req.file.originalname,
+      sheet: sheets
+        .filter((s) => s.headerRow)
+        .map((s) => s.name)
+        .join(", "),
+      hash: createHash("sha256").update(req.file.buffer).digest("hex"),
+      mode,
+      ...options,
+      status: "preview",
+      total: rows.length,
+      valid: count("ready"),
+      needsFix: count("needs_fix"),
+      duplicates: count("duplicate"),
+      createdAt: new Date().toISOString(),
+      createdBy: actorOf(req).uid,
+    });
+    res.json({ id, mode, sheets, rows, summaries });
+  },
+);
+// Firestore and Firebase Auth calls can drop on a weak network; each import
+// step is idempotent, so it is simply tried again.
+const retryDelay = Number(process.env.IMPORT_RETRY_DELAY_MS ?? 1500);
+async function retrying<T>(work: () => Promise<T>, attempts = 3): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      // A request the server refused on purpose (fail()) is not retried.
+      if (attempt >= attempts || (error as { status?: number }).status)
+        throw error;
+      await new Promise((resolve) => setTimeout(resolve, attempt * retryDelay));
+    }
+  }
+}
+// Saving runs in the background (the API is a persistent process), so a large
+// workbook is not cut off by browser or reverse-proxy request timeouts.
+app.post("/api/imports/workbook/:id/commit", async (req, res) => {
+  requirePermission(req, "imports");
+  const actor = actorOf(req);
+  const id = safeId(req.params.id);
+  const ref = db.doc(`importJobs/${id}`);
+  const { rows, summaries } = JSON.parse(
+    await readFile(path.join(storage, `import-${id}.json`), "utf8"),
+  ) as { rows: WorkbookRow[]; summaries: SummarySheet[] };
+  let job: Record<string, unknown> = {};
+  await retrying(() =>
+    db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) fail("Import not found", 404);
+      job = snap.data()!;
+      if (job.kind !== "registrationWorkbook")
+        fail("This import was not created from a registration workbook");
+      if (
+        job.status !== "preview" &&
+        job.status !== "failed" &&
+        !(
+          job.status === "running" &&
+          Date.parse(String(job.leaseUntil)) < Date.now()
+        )
+      )
+        fail("This import is already running or complete", 409);
+      tx.update(ref, {
+        status: "running",
+        processed: 0,
+        leaseUntil: new Date(Date.now() + 600000).toISOString(),
+      });
+    }),
+  );
+  const counts = {
+    created: 0,
+    updated: 0,
+    existing: 0,
+    needsFix: 0,
+    duplicates: 0,
+    loginReady: 0,
+    loginFailed: 0,
+  };
+  const now = () => new Date().toISOString();
+  async function importRow(row: WorkbookRow, index: number) {
+    // Original cells are kept for every row, including ones that need fixing.
+    const rowRef = db.doc(`registrationRows/${id}-${index + 1}`);
+    const data = row.status === "ready" ? row.person : null;
+    const personRef = data ? db.doc(`people/${String(data.email)}`) : null;
+    const result = await retrying(() =>
+      db.runTransaction(async (tx) => {
+        const [saved, old] = await Promise.all([
+          tx.get(rowRef),
+          personRef ? tx.get(personRef) : Promise.resolve(null),
+        ]);
+        // A retried import resumes: rows already written are not written again.
+        if (saved.exists)
+          return {
+            outcome: String(saved.data()!.outcome),
+            retryLogin:
+              ["created", "updated"].includes(saved.data()!.outcome) &&
+              saved.data()!.login !== "ready",
+          };
+        const base = {
+          importJobId: id,
+          position: index,
+          fileName: job.fileName,
+          sheet: row.sheet,
+          row: row.row,
+          original: row.original,
+          errors: row.errors,
+          warnings: row.warnings,
+          importedAt: now(),
+          importedBy: actor.uid,
+        };
+        if (!data || !personRef || !old) {
+          const outcome =
+            row.status === "duplicate" ? "duplicate" : "needs_fix";
+          tx.create(rowRef, {
+            ...base,
+            email: row.email,
+            outcome,
+          });
+          return { outcome, retryLogin: false };
+        }
+        const importSource = {
+          jobId: id,
+          rowId: rowRef.id,
+          sheet: row.sheet,
+          row: row.row,
+        };
+        let outcome: string;
+        const previous = old.data();
+        if (
+          old.exists &&
+          (job.mode !== "update" || previous!.isDemo || previous!.isTestAccount)
+        )
+          outcome = "existing";
+        else if (old.exists) {
+          const update: Record<string, unknown> = { ...data };
+          // Issued coupons are tied to the role; a paper entered through
+          // Submissions outranks the workbook title.
+          if (previous!.coupons?.length && previous!.role !== data.role)
+            update.role = previous!.role;
+          if (
+            previous!.paper &&
+            !String(previous!.paper.submissionId || "").startsWith("ABS-")
+          )
+            delete update.paper;
+          for (const coupon of previous!.coupons || [])
+            tx.update(db.doc(`couponIndex/${safeId(coupon.couponId)}`), {
+              fullName: data.fullName,
+            });
+          tx.update(personRef, {
+            ...update,
+            searchKeys: personSearchKeys(data),
+            importSource,
+            lastImportJobId: id,
+            version: (previous!.version || 1) + 1,
+            updatedAt: now(),
+            updatedBy: actor.uid,
+          });
+          outcome = "updated";
+        } else {
+          tx.create(personRef, {
+            ...data,
+            searchKeys: personSearchKeys(data),
+            registrationId: `CONE-${randomUUID()}`,
+            passId: `PASS-${randomUUID()}`,
+            coupons: [],
+            personalSchedule: [],
+            duties: [],
+            version: 1,
+            isDemo: false,
+            importJobId: id,
+            importSource,
+            createdAt: now(),
+            createdBy: actor.uid,
+          });
+          outcome = "created";
+        }
+        tx.create(rowRef, { ...base, email: data.email, outcome });
+        return { outcome, retryLogin: outcome !== "existing" };
+      }),
+    );
+    if (result.outcome === "created") counts.created++;
+    else if (result.outcome === "updated") counts.updated++;
+    else if (result.outcome === "existing") counts.existing++;
+    else if (result.outcome === "duplicate") counts.duplicates++;
+    else counts.needsFix++;
+    if (!data || !result.retryLogin) return;
+    // Same login setup as a participant created by hand: a passwordless
+    // Firebase account so the person can sign in with the emailed OTP.
+    try {
+      const identity = {
+        email: String(data.email),
+        fullName: String(data.fullName),
+        mobile: String(data.mobile),
+      };
+      await retrying(async () => {
+        const provisioned = await ensureIdentity(
+          identity.email,
+          identity.fullName,
+        );
+        await ensureParticipantAccess(
+          provisioned.account.uid,
+          identity,
+          actor.uid,
+        );
+        await rowRef.update({ login: "ready", loginError: null });
+      });
+      counts.loginReady++;
+    } catch (error) {
+      counts.loginFailed++;
+      await retrying(() =>
+        rowRef.update({
+          login: "failed",
+          loginError: (error as Error).message.slice(0, 300),
+        }),
+      ).catch(() => undefined);
+    }
+  }
+  let rowErrors = 0;
+  let lastError = "";
+  async function run() {
+    try {
+      // Summary sheets such as MAIN are stored as laid out in Excel.
+      for (const [index, summary] of summaries.entries())
+        await retrying(() =>
+          db.doc(`workbookSummaries/${id}-${index + 1}`).set({
+            ...summary,
+            importJobId: id,
+            position: index,
+            fileName: job.fileName,
+            savedAt: now(),
+            savedBy: actor.uid,
+          }),
+        );
+      // Ready rows have distinct emails, so small parallel batches cannot
+      // collide. A row that still fails is left for Retry; the rest continue.
+      for (let start = 0; start < rows.length; start += 8) {
+        await Promise.all(
+          rows.slice(start, start + 8).map((row, offset) =>
+            importRow(row, start + offset).catch((error) => {
+              rowErrors++;
+              lastError = `${row.sheet} row ${row.row}: ${(error as Error).message}`;
+            }),
+          ),
+        );
+        await ref
+          .update({
+            processed: Math.min(start + 8, rows.length),
+            leaseUntil: new Date(Date.now() + 600000).toISOString(),
+          })
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      rowErrors++;
+      lastError = (error as Error).message;
+    }
+    const finished = {
+      ...counts,
+      rowErrors,
+      lastError: lastError.slice(0, 500),
+      processed: rows.length,
+    };
+    await retrying(() =>
+      ref.update(
+        // Failed rows and failed logins both leave the job open for Retry.
+        rowErrors || counts.loginFailed
+          ? { status: "failed", ...finished }
+          : { status: "completed", ...finished, completedAt: now() },
+      ),
+    ).catch((error) => console.error(`Import ${id} status update`, error));
+    if (!rowErrors)
+      await audit(actor, "import.commit", id).catch(() => undefined);
+  }
+  void run();
+  res.status(202).json({ status: "running", total: rows.length });
+});
+// A run whose lease lapsed was cut off (server restart or crash): retryable.
+const stalled = (job: Record<string, unknown>) =>
+  job.status === "running" && Date.parse(String(job.leaseUntil)) < Date.now();
+app.get("/api/imports/workbook/:id/status", async (req, res) => {
+  requirePermission(req, "imports");
+  const job = (
+    await db.doc(`importJobs/${safeId(req.params.id)}`).get()
+  ).data();
+  if (!job || job.kind !== "registrationWorkbook")
+    fail("Workbook import not found", 404);
+  const fields = [
+    "status",
+    "processed",
+    "total",
+    "created",
+    "updated",
+    "existing",
+    "needsFix",
+    "duplicates",
+    "loginReady",
+    "loginFailed",
+    "rowErrors",
+    "lastError",
+  ];
+  res.json({
+    ...Object.fromEntries(fields.map((f) => [f, job[f] ?? null])),
+    stalled: stalled(job),
+  });
+});
+type ReportRow = {
+  sheet: string;
+  row: number;
+  email: string;
+  status: string;
+  problems: string[];
+  // Fields and original columns that are missing or invalid.
+  invalidFields: string[];
+  invalidColumns: string[];
+  original: Record<string, string>;
+};
+// Saved rows once committed; the preview file until then.
+async function workbookReport(id: string) {
+  const job = (await db.doc(`importJobs/${id}`).get()).data();
+  if (!job || job.kind !== "registrationWorkbook")
+    fail("Workbook import not found", 404);
+  // Every row's outcome is read, but only rows that still need attention
+  // are read in full: imported rows carry their whole original record.
+  const saved = await db
+    .collection("registrationRows")
+    .where("importJobId", "==", id)
+    .select("outcome", "login")
+    .get();
+  let rows: ReportRow[];
+  let summaries: SummarySheet[];
+  if (saved.size) {
+    const open = saved.docs
+      .filter(
+        (d) =>
+          ["needs_fix", "duplicate"].includes(d.data().outcome) ||
+          d.data().login === "failed",
+      )
+      .map((d) => d.ref);
+    const chunks = [];
+    for (let i = 0; i < open.length; i += 300)
+      chunks.push(open.slice(i, i + 300));
+    const [full, summaryDocs] = await Promise.all([
+      Promise.all(chunks.map((refs) => db.getAll(...refs))),
+      db.collection("workbookSummaries").where("importJobId", "==", id).get(),
+    ]);
+    rows = full
+      .flat()
+      .map((d) => d.data()!)
+      .sort((a, b) => a.position - b.position)
+      .map((d) => ({
+        sheet: d.sheet,
+        row: d.row,
+        email: d.email,
+        status: d.login === "failed" ? "login_failed" : d.outcome,
+        invalidFields: problemFields(d.errors),
+        invalidColumns: problemColumns(d.original, d.errors),
+        problems: [
+          ...d.errors,
+          ...d.warnings,
+          ...(d.login === "failed"
+            ? [`Login setup failed: ${d.loginError}`]
+            : []),
+        ],
+        original: d.original,
+      }));
+    summaries = summaryDocs.docs
+      .map((d) => d.data())
+      .sort((a, b) => a.position - b.position)
+      .map(({ sheet, title, headerRows, rows }) => ({
+        sheet,
+        title,
+        headerRows,
+        rows,
+      }));
+  } else {
+    const file = JSON.parse(
+      await readFile(path.join(storage, `import-${id}.json`), "utf8"),
+    ) as { rows: WorkbookRow[]; summaries: SummarySheet[] };
+    rows = file.rows.map((r) => ({
+      sheet: r.sheet,
+      row: r.row,
+      email: r.email,
+      status: r.status,
+      problems: [...r.errors, ...r.warnings],
+      invalidFields: problemFields(r.errors),
+      invalidColumns: problemColumns(r.original, r.errors),
+      original: r.original,
+    }));
+    summaries = file.summaries;
+  }
+  return {
+    job: {
+      id,
+      fileName: job.fileName,
+      status: job.status,
+      createdAt: job.createdAt,
+      completedAt: job.completedAt,
+      total: job.total,
+      valid: job.valid,
+      created: job.created,
+      updated: job.updated,
+      existing: job.existing,
+      loginReady: job.loginReady,
+      loginFailed: job.loginFailed,
+      processed: job.processed,
+      rowErrors: job.rowErrors,
+      lastError: job.lastError,
+      stalled: stalled(job),
+    },
+    summaries,
+    rowsToFix: rows.filter((r) =>
+      ["needs_fix", "duplicate", "login_failed"].includes(r.status),
+    ),
+  };
+}
+app.get("/api/imports/workbook/:id/report", async (req, res) => {
+  requirePermission(req, "imports");
+  res.json(await workbookReport(safeId(req.params.id)));
+});
+// Rows to fix with every original column, plus the summary sheets, as Excel.
+app.get("/api/imports/workbook/:id/rows-to-fix", async (req, res) => {
+  requirePermission(req, "imports");
+  const { job, summaries, rowsToFix } = await workbookReport(
+    safeId(req.params.id),
+  );
+  const book = new ExcelJS.Workbook();
+  const sheet = book.addWorksheet("Rows to fix", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
+  const headers = [
+    ...new Set(rowsToFix.flatMap((r) => Object.keys(r.original))),
+  ];
+  const labels: Record<string, string> = {
+    needs_fix: "Needs fix",
+    duplicate: "Duplicate",
+    login_failed: "Login failed",
+  };
+  sheet.addRow(["Sheet", "Excel row", "Status", "Problem", ...headers]);
+  sheet.getRow(1).font = { bold: true };
+  // Missing or invalid cells are filled red, as on screen.
+  const red = {
+    fill: {
+      type: "pattern" as const,
+      pattern: "solid" as const,
+      fgColor: { argb: "FFFDE2E1" },
+    },
+    font: { color: { argb: "FFB42318" }, bold: true },
+  };
+  for (const r of rowsToFix) {
+    const added = sheet.addRow([
+      r.sheet,
+      r.row,
+      labels[r.status] || r.status,
+      r.problems.join("; "),
+      ...headers.map((h) => r.original[h] ?? ""),
+    ]);
+    if (r.invalidFields.length) added.getCell(4).font = red.font;
+    for (const header of r.invalidColumns)
+      Object.assign(added.getCell(5 + headers.indexOf(header)), red);
+  }
+  sheet.columns.forEach((column, i) => {
+    column.width = i === 3 ? 45 : i < 3 ? 14 : 22;
+  });
+  for (const summary of summaries) {
+    const out = book.addWorksheet(summary.sheet.slice(0, 31));
+    let top = 1;
+    if (summary.title) {
+      out.getCell(1, 1).value = summary.title;
+      out.getCell(1, 1).font = { bold: true, size: 13 };
+      top = 3;
+    }
+    // Re-create merged cells from the stored column and row spans.
+    const taken = new Set<string>();
+    summary.rows.forEach((row, i) => {
+      const r = top + i;
+      let c = 1;
+      for (const cell of row.cells) {
+        while (taken.has(`${r}:${c}`)) c++;
+        const cols = cell.colSpan || 1;
+        const span = cell.rowSpan || 1;
+        const target = out.getCell(r, c);
+        target.value = /^\d+(\.\d+)?$/.test(cell.text)
+          ? Number(cell.text)
+          : cell.text;
+        if (i < summary.headerRows) target.font = { bold: true };
+        if (cols > 1 || span > 1)
+          out.mergeCells(r, c, r + span - 1, c + cols - 1);
+        for (let y = 0; y < span; y++)
+          for (let x = 0; x < cols; x++) taken.add(`${r + y}:${c + x}`);
+        c += cols;
+      }
+    });
+  }
+  const base = String(job.fileName || "workbook").replace(/\.xlsx$/i, "");
+  res.type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.attachment(`rows-to-fix - ${base}.xlsx`);
+  await book.xlsx.write(res);
+  res.end();
+});
 app.get("/api/import-template", async (req, res) => {
   requirePermission(req, "imports");
   const book = new ExcelJS.Workbook();
@@ -1071,11 +1718,14 @@ app.get("/api/import-template", async (req, res) => {
 });
 app.get("/api/media", async (req, res) => {
   requirePermission(req, "media");
-  const snap = await db.collection("mediaAssets").limit(100).get();
   res.json(
-    snap.docs
-      .filter((d) => !d.data().archivedAt)
-      .map((d) => ({ id: d.id, ...d.data() })),
+    await readPage({
+      query: db.collection("mediaAssets").orderBy("createdAt", "desc"),
+      collection: "mediaAssets",
+      limit: pageSize(req.query.limit, 24),
+      after: cursorOf(req.query.after),
+      keep: (d) => !d.archivedAt,
+    }),
   );
 });
 app.post("/api/media", upload.single("file"), async (req, res) => {
@@ -1209,20 +1859,17 @@ app.post("/api/email/templates/defaults", async (req, res) => {
 });
 app.get("/api/email/jobs", async (req, res) => {
   requirePermission(req, "email");
-  const snapshot = await db
-    .collection("emailJobs")
-    .orderBy("createdAt", "desc")
-    .limit(100)
-    .get();
-  res.json(
-    snapshot.docs.map((d) => ({
-      id: d.id,
-      recipient: d.data().recipient,
-      status: d.data().status,
-      attempts: d.data().attempts,
-      createdAt: d.data().createdAt,
-    })),
-  );
+  // Only the columns shown; message bodies stay on the server.
+  const page = await readPage({
+    query: db
+      .collection("emailJobs")
+      .orderBy("createdAt", "desc")
+      .select("recipient", "status", "attempts", "createdAt"),
+    collection: "emailJobs",
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+  });
+  res.json(page);
 });
 app.post("/api/users/invite", async (req, res) => {
   requirePermission(req, "users");
@@ -1258,6 +1905,7 @@ app.post("/api/users/invite", async (req, res) => {
   const batch = db.batch();
   batch.create(db.doc(`adminUsers/${account.uid}`), {
     ...data,
+    searchKeys: personSearchKeys(data),
     version: 1,
     createdAt: new Date().toISOString(),
     createdBy: actorOf(req).uid,
@@ -1579,6 +2227,13 @@ app.use(
             ? "SMTP authentication failed. Check the sender address and app password in SMTP settings."
             : "Email delivery failed. Check SMTP settings, recipient address and server connectivity.",
       });
+      return;
+    }
+    // Quota, network or credential failures of Firebase itself.
+    const outage = firebaseOutage(error);
+    if (outage) {
+      console.error(`Firebase ${outage.kind} failure:`, err.message);
+      res.status(503).json({ error: outage.message });
       return;
     }
     const status =

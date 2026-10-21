@@ -1,11 +1,12 @@
 import type { Express, Request } from "express";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { unlink } from "node:fs/promises";
+import { stat, unlink } from "node:fs/promises";
 import multer from "multer";
 import sharp from "sharp";
 import { z } from "zod";
 import { db } from "./firebase.js";
+import { memo } from "./request-cache.js";
 import { assertControlAuthority, runtimeConfiguration } from "./control.js";
 import type { Actor } from "../shared/schema.js";
 
@@ -37,11 +38,22 @@ export async function publicBranding() {
   };
 }
 export function registerPublicBranding(app: Express, storage: string) {
+  // Every open dashboard and the mobile app poll this public endpoint.
+  const cached = memo<Awaited<ReturnType<typeof publicBranding>>>();
   app.get("/api/branding", async (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-    res.json(await publicBranding());
+    res.json(
+      await cached("branding", async () => {
+        const value = await publicBranding();
+        // A logo whose file is not on this server would only produce 404s.
+        const file = path.join(storage, `branding-${value.logoId}.webp`);
+        if (value.logoId && !(await stat(file).catch(() => null)))
+          return { ...value, logoId: null, logoUrl: null };
+        return value;
+      }),
+    );
   });
   app.get("/api/branding/logo/:id", async (req, res, next) => {
     const id = z.uuid().parse(req.params.id);

@@ -75,7 +75,8 @@ test("Super Admin adds role templates and queues a presenter email to active pre
       }));
       return route.fulfill({ json: { added: templates.length } });
     }
-    if (endpoint === "/api/email/jobs") return route.fulfill({ json: [] });
+    if (endpoint === "/api/email/jobs")
+      return route.fulfill({ json: { rows: [], next: null } });
     if (endpoint === "/api/settings/smtp")
       return route.fulfill({ json: { host: "smtp.example.org" } });
     if (endpoint === "/api/records/participants") {

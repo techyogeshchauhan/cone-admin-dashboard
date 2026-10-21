@@ -5,6 +5,7 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import { auth, db } from "./firebase.js";
 import { accessRoles, type AccessRole } from "../shared/schema.js";
+import { firebaseOutage } from "./firebase-errors.js";
 type Credentials = { role: AccessRole; email: string; password: string };
 type Dependencies = {
   readCredentials: () => Promise<{ accounts: Credentials[] }>;
@@ -99,10 +100,14 @@ export function registerDevRoleLogin(
         // Sent only to the explicitly enabled loopback development UI, never
         // embedded in JavaScript, environment VITE_* values, or production assets.
         res.json({ email: account.email, password: account.password });
-      } catch {
+      } catch (error) {
+        const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
         res.status(503).json({
           error:
-            "Cannot load dashboard test accounts. Check the API credentials and local test-account setup.",
+            firebaseOutage(error)?.message ??
+            (missing
+              ? "No dashboard test accounts on this computer. Run npm run setup:admin-test-accounts."
+              : "Cannot load dashboard test accounts. Check the API credentials and local test-account setup."),
         });
       }
     },

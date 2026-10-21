@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { auth, db } from "./firebase.js";
 import { accessRoles, type AccessRole } from "../shared/schema.js";
+import { personSearchKeys } from "../shared/search.js";
 
 if (
   process.env.APP_ENV !== "development" ||
@@ -107,6 +108,7 @@ for (const [index, account] of accounts.entries()) {
       fullName,
       email: account.email,
       mobile,
+      searchKeys: personSearchKeys({ fullName, email: account.email, mobile }),
       accessRole: account.role,
       conferenceId: "main",
       status: "active",
