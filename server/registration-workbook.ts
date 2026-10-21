@@ -6,6 +6,7 @@
 import ExcelJS from "exceljs";
 import { z } from "zod";
 import { conferenceRoles, mobile } from "../shared/schema.js";
+import { fieldFor, headerKey as key } from "../shared/registration-columns.js";
 
 export type RowStatus = "ready" | "needs_fix" | "duplicate";
 export type WorkbookRow = {
@@ -41,41 +42,6 @@ export const importOptions = z.object({
   registrationStatus: z.enum(["pending", "confirmed"]).default("pending"),
 });
 export type ImportOptions = z.infer<typeof importOptions>;
-
-const key = (header: string) => header.toLowerCase().replace(/[^a-z]/g, "");
-// Header spellings seen across discipline sheets, keyed by letters only.
-function fieldFor(header: string) {
-  const k = key(header);
-  if (!k) return null;
-  if (k === "srno") return "srNo";
-  if (k === "discipline") return "discipline";
-  if (k === "ct" || k === "category") return "category";
-  if (k === "mf" || k === "gender") return "gender";
-  if (k === "op") return "presentationType";
-  if (k.startsWith("titleofabstract")) return "abstractTitle";
-  if (k.startsWith("nameofauthor")) return "fullName";
-  if (k.startsWith("organizationalaffiliation") || k === "affiliation")
-    return "affiliation";
-  if (k === "emailaddress" || k === "email") return "email";
-  if (
-    k === "registrationfee" ||
-    k.endsWith("amountreceived") ||
-    k === "ammountreceived"
-  )
-    return "registrationFee";
-  if (k === "workingas") return "workingAs";
-  if (k === "softcopy") return "softCopy";
-  if (k === "district") return "district";
-  if (k.startsWith("acc")) return "accommodation";
-  if (k === "dob") return "dob";
-  if (k === "rollno") return "rollNo";
-  if (k === "feesreceived" || k === "ddreceived") return "feesReceived";
-  if (k.startsWith("mobile")) return "mobile";
-  if (k === "awardee" || (k.startsWith("ear") && k.includes("aw")))
-    return "earlierAwardee";
-  if (k === "remark" || k === "remarks") return "remark";
-  return null;
-}
 
 // Merged cells whose master is blank make ExcelJS's cell.text throw.
 function rawText(cell: ExcelJS.Cell) {

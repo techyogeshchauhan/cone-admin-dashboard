@@ -43,6 +43,17 @@ import {
 import { encryptSecret } from "./secrets.js";
 import { readWorkbook } from "./workbook.js";
 import { clearRequestCaches, memo } from "./request-cache.js";
+import { firebaseOutage } from "./firebase-errors.js";
+import { pageSize, readPage } from "./pagination.js";
+import {
+  matchesTerms,
+  personSearchKeys,
+  searchTerms,
+} from "../shared/search.js";
+import {
+  problemColumns,
+  problemFields,
+} from "../shared/registration-columns.js";
 import {
   importOptions,
   parseRegistrationWorkbook,
@@ -353,23 +364,30 @@ app.get("/api/profile", async (req, res) => {
     ),
   });
 });
-app.get("/api/overview", async (req, res) => {
-  requirePermission(req, "reports");
+// Counting registrations reads every participant, so the result is kept for
+// a short while; any change made through the API clears it.
+const overviews = memo<Record<string, unknown>>();
+async function overview(withActivity: boolean) {
   const [people, redemptions, imports, activity] = await Promise.all([
     db
       .collection("people")
       .select("isDemo", "archivedAt", "registrationStatus", "role")
       .get(),
     db.collection("mealRedemptions").count().get(),
-    db.collection("importJobs").orderBy("createdAt", "desc").limit(5).get(),
-    can(actorOf(req), "audit", "read")
+    db
+      .collection("importJobs")
+      .orderBy("createdAt", "desc")
+      .select("fileName", "status", "total", "createdAt", "kind")
+      .limit(5)
+      .get(),
+    withActivity
       ? db.collection("auditLogs").orderBy("createdAt", "desc").limit(8).get()
       : Promise.resolve(null),
   ]);
   const rows = people.docs
     .map((d) => d.data())
     .filter((d) => !d.isDemo && !d.archivedAt);
-  res.json({
+  return {
     registrations: rows.length,
     confirmed: rows.filter((p) => p.registrationStatus === "confirmed").length,
     presenters: rows.filter((p) => p.role === "presenter").length,
@@ -388,7 +406,16 @@ app.get("/api/overview", async (req, res) => {
         target: d.data().target || "Application",
         createdAt: d.data().createdAt,
       })) || [],
-  });
+  };
+}
+app.get("/api/overview", async (req, res) => {
+  requirePermission(req, "reports");
+  const withActivity = can(actorOf(req), "audit", "read");
+  res.json(
+    await overviews(withActivity ? "activity" : "counts", () =>
+      overview(withActivity),
+    ),
+  );
 });
 app.get("/api/conference", async (req, res) => {
   requirePermission(req, "conference");
@@ -481,16 +508,26 @@ app.put("/api/settings/smtp", async (req, res) => {
   await audit(actorOf(req), "smtp.update", "configuration");
   res.json(await publicSmtpConfiguration());
 });
-for (const [route, collection, permission] of [
-  ["audit", "auditLogs", "audit"],
-  ["analysis", "analysisReports", "analysis"],
-  ["imports", "importJobs", "imports"],
-  ["redemptions", "mealRedemptions", "redemptions"],
+// Cursor of the previous page: the id of its last document.
+const cursorOf = (value: unknown) =>
+  typeof value === "string" && value ? safeId(value) : undefined;
+// Activity-style lists, newest first, a page at a time.
+for (const [route, collection, permission, newest] of [
+  ["audit", "auditLogs", "audit", "createdAt"],
+  ["analysis", "analysisReports", "analysis", "generatedAt"],
+  ["imports", "importJobs", "imports", "createdAt"],
+  ["redemptions", "mealRedemptions", "redemptions", "redeemedAt"],
 ] as const) {
   app.get(`/api/${route}`, async (req, res) => {
     requirePermission(req, permission);
-    const rows = await db.collection(collection).limit(100).get();
-    res.json(rows.docs.map((d) => ({ id: d.id, ...d.data() })));
+    res.json(
+      await readPage({
+        query: db.collection(collection).orderBy(newest, "desc"),
+        collection,
+        limit: pageSize(req.query.limit),
+        after: cursorOf(req.query.after),
+      }),
+    );
   });
 }
 app.get("/api/records/:module", async (req, res) => {
@@ -498,42 +535,61 @@ app.get("/api/records/:module", async (req, res) => {
     .enum(Object.keys(schemas) as [Module, ...Module[]])
     .parse(req.params.module);
   requirePermission(req, module);
-  let query = db
-    .collection(collectionNames[module])
-    .orderBy("__name__")
-    .limit(50);
+  const collection = collectionNames[module];
+  const terms = searchTerms(req.query.q);
+  const keep: ((data: Record<string, unknown>) => boolean)[] = [
+    (d) => !d.archivedAt,
+  ];
+  let query: FirebaseFirestore.Query = db
+    .collection(collection)
+    .orderBy("__name__");
+  // People and dashboard accounts are found through their search keys;
+  // the other modules are small and are matched while they are read.
+  const keyed = module === "participants" || module === "users";
+  if (terms.length && keyed) {
+    const lookup = [...terms].sort((a, b) => b.length - a.length)[0];
+    query = query.where("searchKeys", "array-contains", lookup);
+    keep.push((d) => matchesTerms(d.searchKeys, terms));
+  } else if (terms.length)
+    keep.push((d) =>
+      terms.every((term) =>
+        Object.values(d).some(
+          (v) =>
+            ["string", "number"].includes(typeof v) &&
+            String(v).toLowerCase().includes(term),
+        ),
+      ),
+    );
   if (module === "participants") {
-    if (req.query.role)
-      query = query.where(
-        "role",
-        "==",
-        z.enum(conferenceRoles).parse(req.query.role),
-      );
-    if (req.query.status)
-      query = query.where(
-        "registrationStatus",
-        "==",
-        z
+    const role = req.query.role
+      ? z.enum(conferenceRoles).parse(req.query.role)
+      : null;
+    const status = req.query.status
+      ? z
           .enum(["pending", "confirmed", "cancelled", "suspended"])
-          .parse(req.query.status),
-      );
+          .parse(req.query.status)
+      : null;
+    // With a search the key lookup is the indexed filter; these then apply
+    // in memory, so no composite index is needed.
+    if (role)
+      if (terms.length) keep.push((d) => d.role === role);
+      else query = query.where("role", "==", role);
+    if (status)
+      if (terms.length) keep.push((d) => d.registrationStatus === status);
+      else query = query.where("registrationStatus", "==", status);
+    if (req.query.excludeDemo === "true") keep.push((d) => !d.isDemo);
   }
-  const rows = await (
-    req.query.after ? query.startAfter(safeId(req.query.after)) : query
-  ).get();
+  const page = await readPage({
+    query,
+    collection,
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+    byId: true,
+    keep: (d) => keep.every((test) => test(d)),
+  });
   res.json({
-    rows: rows.docs
-      .filter(
-        (d) =>
-          !d.data().archivedAt &&
-          !(
-            module === "participants" &&
-            req.query.excludeDemo === "true" &&
-            d.data().isDemo
-          ),
-      )
-      .map((d) => ({ id: d.id, ...d.data() })),
-    next: rows.size === 50 ? rows.docs.at(-1)!.id : null,
+    ...page,
+    rows: page.rows.map(({ searchKeys: _keys, ...row }) => row),
   });
 });
 app.post("/api/records/:module", async (req, res) => {
@@ -774,6 +830,9 @@ app.post("/api/records/:module", async (req, res) => {
       {
         ...extras,
         ...data,
+        ...(module === "participants"
+          ? { searchKeys: personSearchKeys(data) }
+          : {}),
         version: (old.data()?.version || 0) + 1,
         updatedAt: new Date().toISOString(),
         updatedBy: actor.uid,
@@ -1058,6 +1117,7 @@ app.post("/api/imports/:id/commit", async (req, res) => {
             });
           tx.update(person, {
             ...data,
+            searchKeys: personSearchKeys(data),
             version: (old.data()!.version || 1) + 1,
             lastImportJobId: id,
             updatedAt: new Date().toISOString(),
@@ -1066,6 +1126,7 @@ app.post("/api/imports/:id/commit", async (req, res) => {
         } else
           tx.create(person, {
             ...data,
+            searchKeys: personSearchKeys(data),
             registrationId: `CONE-${randomUUID()}`,
             passId: `PASS-${randomUUID()}`,
             coupons: [],
@@ -1282,6 +1343,7 @@ app.post("/api/imports/workbook/:id/commit", async (req, res) => {
             });
           tx.update(personRef, {
             ...update,
+            searchKeys: personSearchKeys(data),
             importSource,
             lastImportJobId: id,
             version: (previous!.version || 1) + 1,
@@ -1292,6 +1354,7 @@ app.post("/api/imports/workbook/:id/commit", async (req, res) => {
         } else {
           tx.create(personRef, {
             ...data,
+            searchKeys: personSearchKeys(data),
             registrationId: `CONE-${randomUUID()}`,
             passId: `PASS-${randomUUID()}`,
             coupons: [],
@@ -1440,6 +1503,9 @@ type ReportRow = {
   email: string;
   status: string;
   problems: string[];
+  // Fields and original columns that are missing or invalid.
+  invalidFields: string[];
+  invalidColumns: string[];
   original: Record<string, string>;
 };
 // Saved rows once committed; the preview file until then.
@@ -1480,6 +1546,8 @@ async function workbookReport(id: string) {
         row: d.row,
         email: d.email,
         status: d.login === "failed" ? "login_failed" : d.outcome,
+        invalidFields: problemFields(d.errors),
+        invalidColumns: problemColumns(d.original, d.errors),
         problems: [
           ...d.errors,
           ...d.warnings,
@@ -1508,6 +1576,8 @@ async function workbookReport(id: string) {
       email: r.email,
       status: r.status,
       problems: [...r.errors, ...r.warnings],
+      invalidFields: problemFields(r.errors),
+      invalidColumns: problemColumns(r.original, r.errors),
       original: r.original,
     }));
     summaries = file.summaries;
@@ -1561,14 +1631,27 @@ app.get("/api/imports/workbook/:id/rows-to-fix", async (req, res) => {
   };
   sheet.addRow(["Sheet", "Excel row", "Status", "Problem", ...headers]);
   sheet.getRow(1).font = { bold: true };
-  for (const r of rowsToFix)
-    sheet.addRow([
+  // Missing or invalid cells are filled red, as on screen.
+  const red = {
+    fill: {
+      type: "pattern" as const,
+      pattern: "solid" as const,
+      fgColor: { argb: "FFFDE2E1" },
+    },
+    font: { color: { argb: "FFB42318" }, bold: true },
+  };
+  for (const r of rowsToFix) {
+    const added = sheet.addRow([
       r.sheet,
       r.row,
       labels[r.status] || r.status,
       r.problems.join("; "),
       ...headers.map((h) => r.original[h] ?? ""),
     ]);
+    if (r.invalidFields.length) added.getCell(4).font = red.font;
+    for (const header of r.invalidColumns)
+      Object.assign(added.getCell(5 + headers.indexOf(header)), red);
+  }
   sheet.columns.forEach((column, i) => {
     column.width = i === 3 ? 45 : i < 3 ? 14 : 22;
   });
@@ -1635,11 +1718,14 @@ app.get("/api/import-template", async (req, res) => {
 });
 app.get("/api/media", async (req, res) => {
   requirePermission(req, "media");
-  const snap = await db.collection("mediaAssets").limit(100).get();
   res.json(
-    snap.docs
-      .filter((d) => !d.data().archivedAt)
-      .map((d) => ({ id: d.id, ...d.data() })),
+    await readPage({
+      query: db.collection("mediaAssets").orderBy("createdAt", "desc"),
+      collection: "mediaAssets",
+      limit: pageSize(req.query.limit, 24),
+      after: cursorOf(req.query.after),
+      keep: (d) => !d.archivedAt,
+    }),
   );
 });
 app.post("/api/media", upload.single("file"), async (req, res) => {
@@ -1773,20 +1859,17 @@ app.post("/api/email/templates/defaults", async (req, res) => {
 });
 app.get("/api/email/jobs", async (req, res) => {
   requirePermission(req, "email");
-  const snapshot = await db
-    .collection("emailJobs")
-    .orderBy("createdAt", "desc")
-    .limit(100)
-    .get();
-  res.json(
-    snapshot.docs.map((d) => ({
-      id: d.id,
-      recipient: d.data().recipient,
-      status: d.data().status,
-      attempts: d.data().attempts,
-      createdAt: d.data().createdAt,
-    })),
-  );
+  // Only the columns shown; message bodies stay on the server.
+  const page = await readPage({
+    query: db
+      .collection("emailJobs")
+      .orderBy("createdAt", "desc")
+      .select("recipient", "status", "attempts", "createdAt"),
+    collection: "emailJobs",
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+  });
+  res.json(page);
 });
 app.post("/api/users/invite", async (req, res) => {
   requirePermission(req, "users");
@@ -1822,6 +1905,7 @@ app.post("/api/users/invite", async (req, res) => {
   const batch = db.batch();
   batch.create(db.doc(`adminUsers/${account.uid}`), {
     ...data,
+    searchKeys: personSearchKeys(data),
     version: 1,
     createdAt: new Date().toISOString(),
     createdBy: actorOf(req).uid,
@@ -2143,6 +2227,13 @@ app.use(
             ? "SMTP authentication failed. Check the sender address and app password in SMTP settings."
             : "Email delivery failed. Check SMTP settings, recipient address and server connectivity.",
       });
+      return;
+    }
+    // Quota, network or credential failures of Firebase itself.
+    const outage = firebaseOutage(error);
+    if (outage) {
+      console.error(`Firebase ${outage.kind} failure:`, err.message);
+      res.status(503).json({ error: outage.message });
       return;
     }
     const status =

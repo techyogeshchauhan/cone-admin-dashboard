@@ -13,6 +13,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { z } from "zod";
 import { auth, db } from "./firebase.js";
 import { ensureIdentity } from "./accounts.js";
+import { personSearchKeys } from "../shared/search.js";
 import { eligible } from "./email-otp.js";
 import { conferenceRoles, mobile } from "../shared/schema.js";
 
@@ -199,6 +200,7 @@ async function provision(entry: Entry) {
       affiliation: entry.affiliation ?? old?.affiliation ?? "Not specified",
       coupons,
       isDemo: false,
+      searchKeys: personSearchKeys(entry),
       version: (old?.version || 0) + 1,
       updatedAt: now(),
       updatedBy: "provision-people",

@@ -103,22 +103,25 @@ test("Super Admin deletes records beside Edit, searches logs, and moves back and
     }
     if (endpoint === "/api/audit")
       return route.fulfill({
-        json: [
-          {
-            id: "a1",
-            actorName: "Test Super Admin",
-            action: "user.delete",
-            target: "staff",
-            createdAt: "2026-10-19",
-          },
-          {
-            id: "a2",
-            actorName: "Test Super Admin",
-            action: "settings.update",
-            target: "main",
-            createdAt: "2026-10-19",
-          },
-        ],
+        json: {
+          next: null,
+          rows: [
+            {
+              id: "a1",
+              actorName: "Test Super Admin",
+              action: "user.delete",
+              target: "staff",
+              createdAt: "2026-10-19",
+            },
+            {
+              id: "a2",
+              actorName: "Test Super Admin",
+              action: "settings.update",
+              target: "main",
+              createdAt: "2026-10-19",
+            },
+          ],
+        },
       });
     return route.fulfill({ json: [] });
   });

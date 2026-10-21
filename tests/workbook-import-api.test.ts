@@ -264,6 +264,12 @@ describe("full registration workbook import", () => {
       row: 6,
       email: "ravi@example.org",
       problems: ["Mobile is missing"],
+      invalidFields: ["mobile"],
+      invalidColumns: ["Mobile No."],
+    });
+    expect(after.body.rowsToFix[1]).toMatchObject({
+      invalidFields: ["email"],
+      invalidColumns: ["EmailAddress"],
     });
 
     const download = await api
@@ -283,6 +289,15 @@ describe("full registration workbook import", () => {
     expect(fix.rowCount).toBe(4);
     expect(fix.getRow(1).getCell(4).text).toBe("Problem");
     expect(fix.getRow(2).getCell(4).text).toBe("Mobile is missing");
+    // Missing and invalid cells are filled red; others are left plain.
+    const column = (name: string) =>
+      (fix.getRow(1).values as string[]).indexOf(name);
+    const fill = (row: number, name: string) =>
+      (fix.getRow(row).getCell(column(name)).fill as any)?.fgColor?.argb;
+    expect(fill(2, "Mobile No.")).toBe("FFFDE2E1");
+    expect(fill(2, "EmailAddress")).toBeUndefined();
+    expect(fill(3, "EmailAddress")).toBe("FFFDE2E1");
+    expect(fill(3, "Mobile No.")).toBeUndefined();
     const main = book.getWorksheet("MAIN")!;
     expect(main.getCell("A1").text).toBe(
       "21st Conference — discipline summary",

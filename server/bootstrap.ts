@@ -1,5 +1,6 @@
 import { auth, db } from "./firebase.js";
 import { identity } from "../shared/schema.js";
+import { personSearchKeys } from "../shared/search.js";
 const [email, fullName, mobile] = process.argv.slice(2);
 const person = identity.parse({ email, fullName, mobile });
 const user = await auth.getUserByEmail(person.email);
@@ -24,6 +25,7 @@ await db.runTransaction(async (tx) => {
     );
   tx.create(db.doc(`adminUsers/${user.uid}`), {
     ...person,
+    searchKeys: personSearchKeys(person),
     accessRole: "superadmin",
     conferenceId: "main",
     status: "active",

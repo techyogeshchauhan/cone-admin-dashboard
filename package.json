@@ -26,7 +26,8 @@
     "test:browser": "npm run build && playwright test",
     "format": "prettier --write src server shared tests browser-tests *.ts *.json",
     "test:otp-emulators": "firebase emulators:exec --only firestore,auth --project demo-cone-otp --config firebase.otp-test.json \"node --import tsx tests/otp-integration.ts\"",
-    "provision:people": "tsx server/provision-people.ts"
+    "provision:people": "tsx server/provision-people.ts",
+    "backfill:search-keys": "tsx server/backfill-search-keys.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

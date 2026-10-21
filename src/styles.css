@@ -886,6 +886,7 @@ input[type="file"]::file-selector-button {
 }
 .load-more {
   display: flex;
+  justify-content: center;
   margin: 15px auto 0;
 }
 .inline-note {
@@ -1358,4 +1359,18 @@ details dd {
 .import-progress progress {
   width: 100%;
   height: 10px;
+}
+/* Missing or invalid imported values. */
+td.cell-invalid,
+details dl div.cell-invalid {
+  background: #fde2e1;
+  color: #b42318;
+  font-weight: 650;
+}
+details dl div.cell-invalid {
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+details dl div.cell-invalid dt {
+  color: #b42318;
 }

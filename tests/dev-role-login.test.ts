@@ -134,4 +134,28 @@ describe("Dashboard development login endpoint", () => {
     expect(result.status).toBe(503);
     expect(result.body.password).toBeUndefined();
   });
+  it("names a used-up Firebase quota instead of blaming the credentials", async () => {
+    verify.mockRejectedValue(
+      Object.assign(new Error("8 RESOURCE_EXHAUSTED: Quota exceeded."), {
+        code: 8,
+      }),
+    );
+    const result = await api
+      .post("/api/dev/role-login")
+      .set("Origin", "http://localhost:3000")
+      .send({ role: "superadmin" });
+    expect(result.status).toBe(503);
+    expect(result.body.error).toMatch(/daily quota is used up/);
+    expect(result.body.password).toBeUndefined();
+  });
+  it("says how to create the test accounts when their file is missing", async () => {
+    read.mockRejectedValue(
+      Object.assign(new Error("no such file"), { code: "ENOENT" }),
+    );
+    const result = await api
+      .post("/api/dev/role-login")
+      .set("Origin", "http://localhost:3000")
+      .send({ role: "superadmin" });
+    expect(result.body.error).toMatch(/npm run setup:admin-test-accounts/);
+  });
 });

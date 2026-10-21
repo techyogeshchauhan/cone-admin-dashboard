@@ -7,6 +7,7 @@ import { statfs } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { auth, db } from "./firebase.js";
+import { personSearchKeys } from "../shared/search.js";
 import { type Actor, accessRoles, userSchema } from "../shared/schema.js";
 import {
   roleId,
@@ -126,6 +127,7 @@ export async function saveDashboardUser(
       ref,
       {
         ...input.data,
+        searchKeys: personSearchKeys(input.data),
         archivedAt: null,
         version: (old.data()?.version || 0) + 1,
         updatedBy: actor.uid,
@@ -144,6 +146,7 @@ export async function saveDashboardUser(
         fullName: input.data.fullName,
         email: input.data.email,
         mobile: input.data.mobile,
+        searchKeys: personSearchKeys(input.data),
         version: (person.data()?.version || 0) + 1,
         updatedBy: actor.uid,
         updatedAt: new Date().toISOString(),

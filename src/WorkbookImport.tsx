@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, Download, FileSpreadsheet, Upload } from "lucide-react";
 import { conferenceRoles } from "../shared/schema";
+import { problemColumns, problemFields } from "../shared/registration-columns";
 import { request } from "./firebase";
+import { LoadMore, useIncremental } from "./paging";
 type Status = "ready" | "needs_fix" | "duplicate";
 type Row = {
   sheet: string;
@@ -41,6 +43,8 @@ type ReportRow = {
   email: string;
   status: string;
   problems: string[];
+  invalidFields: string[];
+  invalidColumns: string[];
   original: Record<string, string>;
 };
 type Report = {
@@ -73,9 +77,19 @@ const labels: Record<string, string> = {
 const pick = (original: Record<string, string>, pattern: RegExp) =>
   Object.entries(original).find(([header]) => pattern.test(header))?.[1] || "";
 const nameOf = (r: { original: Record<string, string> }) =>
-  pick(r.original, /author|name/i) || "—";
+  pick(r.original, /author|name/i);
 const mobileOf = (r: { original: Record<string, string> }) =>
-  pick(r.original, /mobile/i) || "—";
+  pick(r.original, /mobile/i);
+
+// A table cell that turns red when its value is missing or invalid.
+function Checked({ value, invalid }: { value: string; invalid: boolean }) {
+  if (!invalid) return <td>{value || "—"}</td>;
+  return (
+    <td className="cell-invalid" title={value ? "Invalid" : "Missing"}>
+      {value || "Missing"}
+    </td>
+  );
+}
 
 async function downloadRowsToFix(id: string) {
   const blob = await request<Blob>(`/imports/workbook/${id}/rows-to-fix`);
@@ -116,15 +130,21 @@ function SummaryTable({ summary }: { summary: Summary }) {
   );
 }
 
-function OriginalData({ original }: { original: Record<string, string> }) {
+function OriginalData({
+  original,
+  invalid = [],
+}: {
+  original: Record<string, string>;
+  invalid?: string[];
+}) {
   return (
     <details>
       <summary>View</summary>
       <dl>
         {Object.entries(original).map(([k, v]) => (
-          <div key={k}>
+          <div key={k} className={invalid.includes(k) ? "cell-invalid" : ""}>
             <dt>{k}</dt>
-            <dd>{v || "—"}</dd>
+            <dd>{v || (invalid.includes(k) ? "Missing" : "—")}</dd>
           </div>
         ))}
       </dl>
@@ -141,6 +161,7 @@ function RowsToFix({
   rows: ReportRow[];
   onError: (message: string) => void;
 }) {
+  const { shown, more, showMore } = useIncremental(rows, id);
   return (
     <>
       <div className="panel-heading">
@@ -178,26 +199,39 @@ function RowsToFix({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {shown.map((r, i) => (
               <tr key={`${r.sheet}-${r.row}`}>
                 <td>{i + 1}</td>
                 <td>
                   {r.sheet} · {r.row}
                 </td>
-                <td>{nameOf(r)}</td>
-                <td>{r.email || "—"}</td>
-                <td>{mobileOf(r)}</td>
+                <Checked
+                  value={nameOf(r)}
+                  invalid={r.invalidFields.includes("fullName")}
+                />
+                <Checked
+                  value={r.email}
+                  invalid={r.invalidFields.includes("email")}
+                />
+                <Checked
+                  value={mobileOf(r)}
+                  invalid={r.invalidFields.includes("mobile")}
+                />
                 <td>
                   <span className="badge">{labels[r.status] || r.status}</span>{" "}
                   {r.problems.join("; ")}
                 </td>
                 <td>
-                  <OriginalData original={r.original} />
+                  <OriginalData
+                    original={r.original}
+                    invalid={r.invalidColumns}
+                  />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+        <LoadMore next={more} loading={false} onLoad={showMore} />
         {!rows.length && (
           <p className="inline-note">Every row was imported. Nothing to fix.</p>
         )}
@@ -351,10 +385,15 @@ export default function WorkbookImport({
   const reportId = savedId || latestId;
   const count = (status: Status) =>
     preview?.rows.filter((r) => r.status === status).length || 0;
-  const shown = (preview?.rows || []).filter(
+  const matching = (preview?.rows || []).filter(
     (r) =>
       (filter === "all" || r.status === filter) &&
       (!sheetFilter || r.sheet === sheetFilter),
+  );
+  // A workbook can hold thousands of rows: render them a screenful at a time.
+  const { shown, more, showMore } = useIncremental(
+    matching,
+    `${preview?.id}:${filter}:${sheetFilter}`,
   );
   async function read() {
     if (!file) return;
@@ -592,7 +631,7 @@ export default function WorkbookImport({
           <div className="panel-heading">
             <h3>
               {filter === "all" ? "All rows" : labels[filter]}
-              {sheetFilter ? ` · ${sheetFilter}` : ""} ({shown.length})
+              {sheetFilter ? ` · ${sheetFilter}` : ""} ({matching.length})
             </h3>
             <div>
               {(filter !== "all" || sheetFilter) && (
@@ -639,9 +678,18 @@ export default function WorkbookImport({
                     <td>
                       {r.sheet} · {r.row}
                     </td>
-                    <td>{nameOf(r)}</td>
-                    <td>{r.email || "—"}</td>
-                    <td>{mobileOf(r)}</td>
+                    <Checked
+                      value={nameOf(r)}
+                      invalid={problemFields(r.errors).includes("fullName")}
+                    />
+                    <Checked
+                      value={r.email}
+                      invalid={problemFields(r.errors).includes("email")}
+                    />
+                    <Checked
+                      value={mobileOf(r)}
+                      invalid={problemFields(r.errors).includes("mobile")}
+                    />
                     <td>
                       <span
                         className={`badge${r.status === "ready" ? " positive" : ""}`}
@@ -651,12 +699,16 @@ export default function WorkbookImport({
                       {[...r.errors, ...r.warnings].join("; ")}
                     </td>
                     <td>
-                      <OriginalData original={r.original} />
+                      <OriginalData
+                        original={r.original}
+                        invalid={problemColumns(r.original, r.errors)}
+                      />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <LoadMore next={more} loading={false} onLoad={showMore} />
           </div>
         </section>
       )}

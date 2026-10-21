@@ -4,6 +4,7 @@ import { conferenceRoles } from "../shared/schema";
 import { request } from "./firebase";
 import SearchBox, { matchesSearch, NoMatches } from "./SearchBox";
 import WorkbookImport from "./WorkbookImport";
+import { LoadMore, usePagedList } from "./paging";
 type Sheet = { name: string; rows: number; headers: string[] };
 type Preview = {
   id: string;
@@ -66,12 +67,14 @@ export default function ImportCenter() {
     [mode, setMode] = useState("create"),
     [defaultRole, setDefaultRole] = useState("attendee"),
     [preview, setPreview] = useState<Preview | null>(null),
-    [jobs, setJobs] = useState<Job[]>([]),
     [error, setError] = useState(""),
     [note, setNote] = useState(""),
     [busy, setBusy] = useState(false),
     [revision, setRevision] = useState(0),
     [query, setQuery] = useState("");
+  // Import history, newest first, a page at a time.
+  const jobList = usePagedList<Job>("/imports");
+  const jobs = jobList.rows;
   const shownJobs = jobs.filter((job) =>
     matchesSearch(query, job.fileName, job.status, job.createdAt),
   );
@@ -85,9 +88,7 @@ export default function ImportCenter() {
       )
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.id || "";
   useEffect(() => {
-    request<Job[]>("/imports")
-      .then(setJobs)
-      .catch((e) => setError(e.message));
+    if (revision) void jobList.reload();
   }, [revision]);
   useEffect(() => {
     const selected = sheets.find((s) => s.name === sheet);
@@ -456,10 +457,18 @@ export default function ImportCenter() {
               ))}
             </tbody>
           </table>
-          {!jobs.length && <p className="inline-note">No imports yet.</p>}
+          {jobList.loaded && !jobs.length && (
+            <p className="inline-note">No imports yet.</p>
+          )}
           {jobs.length > 0 && !shownJobs.length && (
             <NoMatches what="imports" query={query} />
           )}
+          {jobList.error && <p className="message">{jobList.error}</p>}
+          <LoadMore
+            next={jobList.next}
+            loading={jobList.loading}
+            onLoad={jobList.loadMore}
+          />
         </div>
       </section>
     </>

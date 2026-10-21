@@ -50,6 +50,20 @@ describe("API authorization before administrative writes", () => {
     );
     expect(csp).toContain("object-src 'none'");
   });
+  it("reports a used-up Firebase quota on any page instead of a generic error", async () => {
+    mocks.doc.mockImplementation(() => ({
+      get: vi.fn().mockRejectedValue(
+        Object.assign(new Error("8 RESOURCE_EXHAUSTED: Quota exceeded."), {
+          code: 8,
+        }),
+      ),
+    }));
+    const response = await api
+      .get("/api/me")
+      .set("Authorization", "Bearer token");
+    expect(response.status).toBe(503);
+    expect(response.body.error).toMatch(/daily quota is used up/);
+  });
   it("permits a basic liveness check without Firebase credentials", async () => {
     expect((await api.get("/api/health")).status).toBe(200);
     expect(mocks.verify).not.toHaveBeenCalled();
