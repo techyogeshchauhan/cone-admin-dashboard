@@ -78,7 +78,8 @@ import {
   type Module,
 } from "../shared/schema";
 const DevRoleLogins =
-  import.meta.env.DEV &&
+  (import.meta.env.DEV ||
+    import.meta.env.VITE_ALLOW_REMOTE_ROLE_LOGIN === "true") &&
   import.meta.env.VITE_ENABLE_DASHBOARD_ROLE_LOGIN === "true"
     ? lazy(() => import("./DevRoleLogins"))
     : null;

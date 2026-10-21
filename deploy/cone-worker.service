@@ -1,0 +1,16 @@
+[Unit]
+Description=CONE email worker (cone.ved.bio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cone
+Group=cone
+WorkingDirectory=/var/www/cone
+ExecStart=/usr/bin/node dist-server/server/worker.js
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

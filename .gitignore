@@ -7,3 +7,4 @@ storage/
 *.log
 test-results/
 playwright-report/
+firebase-service-account.json

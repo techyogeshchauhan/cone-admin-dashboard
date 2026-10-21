@@ -80,8 +80,9 @@ import {
 
 export const app = express();
 if (
-  process.env.OTP_AUTH_ENABLED === "true" &&
-  process.env.APP_ENV === "production"
+  process.env.TRUST_PROXY === "loopback" ||
+  (process.env.OTP_AUTH_ENABLED === "true" &&
+    process.env.APP_ENV === "production")
 )
   app.set("trust proxy", "loopback");
 const storage = path.resolve(process.env.STORAGE_ROOT || "./storage");
@@ -119,6 +120,7 @@ app.use(
           "https://recaptcha.google.com/recaptcha/",
           ...(authDomain ? [`https://${authDomain}`] : []),
         ],
+        "img-src": ["'self'", "data:", "blob:"],
       },
     },
   }),

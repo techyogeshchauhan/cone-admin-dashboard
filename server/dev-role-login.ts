@@ -65,12 +65,21 @@ export function registerDevRoleLogin(
           .status(403)
           .json({ error: "Local browser access only" });
       }
+      // Hosted demo servers can opt in explicitly; the browser origin must
+      // still be one of the configured dashboard origins.
+      const remote =
+        process.env.ALLOW_REMOTE_ROLE_LOGIN === "true" &&
+        (process.env.CORS_ALLOWED_ORIGINS || "")
+          .split(",")
+          .map((value) => value.trim())
+          .includes(origin.origin);
       if (
-        !loopback(req.socket.remoteAddress) ||
-        !loopback(req.hostname) ||
-        !loopback(origin.hostname) ||
-        !["http:", "https:"].includes(origin.protocol) ||
-        req.get("x-forwarded-for")
+        !remote &&
+        (!loopback(req.socket.remoteAddress) ||
+          !loopback(req.hostname) ||
+          !loopback(origin.hostname) ||
+          !["http:", "https:"].includes(origin.protocol) ||
+          req.get("x-forwarded-for"))
       )
         return void res
           .status(403)

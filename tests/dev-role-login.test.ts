@@ -8,6 +8,8 @@ const keys = [
   "APP_ENV",
   "ENABLE_ADMIN_TEST_ACCOUNTS",
   "ENABLE_DASHBOARD_ROLE_LOGIN",
+  "ALLOW_REMOTE_ROLE_LOGIN",
+  "CORS_ALLOWED_ORIGINS",
 ] as const;
 const initial = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 describe("Dashboard development login endpoint", () => {
@@ -113,6 +115,29 @@ describe("Dashboard development login endpoint", () => {
           .send({ role: "superadmin" })
       ).status,
     ).toBe(403);
+  });
+  it("allows forwarded requests from a configured origin only when remote login is enabled", async () => {
+    process.env.ALLOW_REMOTE_ROLE_LOGIN = "true";
+    process.env.CORS_ALLOWED_ORIGINS = "https://cone.example";
+    const remote = () =>
+      api
+        .post("/api/dev/role-login")
+        .set("Host", "cone.example")
+        .set("Origin", "https://cone.example")
+        .set("X-Forwarded-For", "203.0.113.1")
+        .send({ role: "superadmin" });
+    expect((await remote()).status).toBe(200);
+    expect(
+      (
+        await api
+          .post("/api/dev/role-login")
+          .set("Origin", "https://external.example")
+          .set("X-Forwarded-For", "203.0.113.1")
+          .send({ role: "superadmin" })
+      ).status,
+    ).toBe(403);
+    process.env.APP_ENV = "production";
+    expect((await remote()).status).toBe(404);
   });
   it("rejects unsupported roles without reading credentials", async () => {
     expect(
