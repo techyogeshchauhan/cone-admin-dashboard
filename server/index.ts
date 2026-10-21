@@ -44,6 +44,7 @@ import { encryptSecret } from "./secrets.js";
 import { readWorkbook } from "./workbook.js";
 import { clearRequestCaches, memo } from "./request-cache.js";
 import { firebaseOutage } from "./firebase-errors.js";
+import { readLog, recordAudit } from "./activity-log.js";
 import { pageSize, readPage } from "./pagination.js";
 import {
   matchesTerms,
@@ -169,14 +170,13 @@ function safeId(value: unknown) {
     .regex(/^[^/]+$/)
     .parse(value);
 }
+// The audit trail is a local log file, not Firestore (see activity-log.ts).
 async function audit(actor: Actor, action: string, target: string) {
-  return db.collection("auditLogs").add({
+  return recordAudit({
     actorUid: actor.uid,
     actorName: actor.fullName,
     action,
     target,
-    conferenceId: "main",
-    createdAt: new Date().toISOString(),
   });
 }
 app.get("/api/health", (_req, res) =>
@@ -430,9 +430,7 @@ async function overview(withActivity: boolean) {
       .select("fileName", "status", "total", "createdAt", "kind")
       .limit(5)
       .get(),
-    withActivity
-      ? db.collection("auditLogs").orderBy("createdAt", "desc").limit(8).get()
-      : Promise.resolve(null),
+    withActivity ? readLog("audit", { limit: 8 }) : Promise.resolve(null),
   ]);
   const rows = people.docs
     .map((d) => d.data())
@@ -449,12 +447,12 @@ async function overview(withActivity: boolean) {
     ),
     recentImports: imports.docs.map((d) => ({ id: d.id, ...d.data() })),
     recentActivity:
-      activity?.docs.map((d) => ({
-        id: d.id,
-        action: d.data().action,
-        actorName: d.data().actorName || "System",
-        target: d.data().target || "Application",
-        createdAt: d.data().createdAt,
+      activity?.rows.map((entry) => ({
+        id: entry.id,
+        action: entry.action,
+        actorName: entry.actorName || "System",
+        target: entry.target || "Application",
+        createdAt: entry.createdAt,
       })) || [],
   };
 }
@@ -589,9 +587,21 @@ app.put("/api/settings/smtp", async (req, res) => {
 const cursorOf = (value: unknown) =>
   typeof value === "string" && value ? safeId(value) : undefined;
 // Activity-style lists, newest first, a page at a time.
+// The audit trail and check reports come from local log files.
+for (const [route, kind] of [
+  ["audit", "audit"],
+  ["analysis", "analysis"],
+] as const)
+  app.get(`/api/${route}`, async (req, res) => {
+    requirePermission(req, route);
+    res.json(
+      await readLog(kind, {
+        limit: pageSize(req.query.limit),
+        after: cursorOf(req.query.after),
+      }),
+    );
+  });
 for (const [route, collection, permission, newest] of [
-  ["audit", "auditLogs", "audit", "createdAt"],
-  ["analysis", "analysisReports", "analysis", "generatedAt"],
   ["imports", "importJobs", "imports", "createdAt"],
   ["redemptions", "mealRedemptions", "redemptions", "redeemedAt"],
 ] as const) {
@@ -725,6 +735,7 @@ app.post("/api/records/:module", async (req, res) => {
     data.closesAtMs = Date.parse(String(data.closesAt));
   }
   const ref = db.collection(collectionNames[module]).doc(safeId(id));
+  let savedAction = "";
   await db.runTransaction(async (tx) => {
     const old = await tx.get(ref);
     if (
@@ -919,14 +930,14 @@ app.post("/api/records/:module", async (req, res) => {
       },
       { merge: true },
     );
-    tx.create(db.collection("auditLogs").doc(), {
-      actorUid: actor.uid,
-      actorName: actor.fullName,
-      action: `${module}.${old.exists ? "update" : "create"}`,
-      target: id,
-      createdAt: new Date().toISOString(),
-      conferenceId: "main",
-    });
+    // Logged once the change is committed (a retried transaction re-runs).
+    savedAction = `${module}.${old.exists ? "update" : "create"}`;
+  });
+  await recordAudit({
+    actorUid: actor.uid,
+    actorName: actor.fullName,
+    action: savedAction,
+    target: id,
   });
   if (module === "participants") {
     try {
@@ -1003,14 +1014,8 @@ app.post("/api/records/:module/:id/archive", async (req, res) => {
       version: (old.data()!.version || 1) + 1,
       ...(module === "participants" ? { registrationStatus: "cancelled" } : {}),
     });
-    tx.create(db.collection("auditLogs").doc(), {
-      actorUid: actor.uid,
-      actorName: actor.fullName,
-      action: `${module}.archive`,
-      target: id,
-      createdAt: new Date().toISOString(),
-    });
   });
+  await audit(actor, `${module}.archive`, id);
 
   res.json({ archived: true });
 });

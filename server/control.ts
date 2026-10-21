@@ -7,6 +7,7 @@ import { statfs } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { auth, db } from "./firebase.js";
+import { recordAudit, type AuditEntry } from "./activity-log.js";
 import { personSearchKeys } from "../shared/search.js";
 import { type Actor, accessRoles, userSchema } from "../shared/schema.js";
 import {
@@ -48,22 +49,35 @@ export async function assertControlAuthority(tx: Transaction, actor: Actor) {
     version: Number(lock.data()?.version || 0) + 1,
   };
 }
-function log(
-  tx: Transaction,
+// A transaction whose audit entries go to the local audit log once it has
+// committed. A retried attempt starts its entries over, so nothing is logged
+// twice or for a change that did not happen.
+async function loggedTransaction<T>(
   actor: Actor,
-  action: string,
-  target: string,
-  details: Record<string, unknown> = {},
+  work: (
+    tx: Transaction,
+    log: (
+      action: string,
+      target: string,
+      details?: Record<string, unknown>,
+    ) => void,
+  ) => Promise<T>,
 ) {
-  tx.create(db.collection("auditLogs").doc(), {
-    actorUid: actor.uid,
-    actorName: actor.fullName,
-    action,
-    target,
-    details,
-    conferenceId: "main",
-    createdAt: new Date().toISOString(),
+  let entries: AuditEntry[] = [];
+  const result = await db.runTransaction((tx) => {
+    entries = [];
+    return work(tx, (action, target, details = {}) =>
+      entries.push({
+        actorUid: actor.uid,
+        actorName: actor.fullName,
+        action,
+        target,
+        details,
+      }),
+    );
   });
+  for (const entry of entries) await recordAudit(entry);
+  return result;
 }
 export async function saveDashboardUser(
   actor: Actor,
@@ -74,7 +88,7 @@ export async function saveDashboardUser(
     fail("Email changes require an identity migration");
   const ref = db.doc(`adminUsers/${account.uid}`);
   let revoke = false;
-  await db.runTransaction(async (tx) => {
+  await loggedTransaction(actor, async (tx, log) => {
     const lock = await assertControlAuthority(tx, actor);
     const personRef = db.doc(`people/${input.data.email}`);
     const [old, role, admins, person] = await Promise.all([
@@ -153,7 +167,7 @@ export async function saveDashboardUser(
       },
       { merge: true },
     );
-    log(tx, actor, "user.access.update", account.uid, {
+    log("user.access.update", account.uid, {
       previousRole: old.data()?.accessRole || null,
       nextRole: input.data.accessRole,
       status: input.data.status,
@@ -218,7 +232,7 @@ controlRouter.put("/roles/:id", async (req, res) => {
     fail("Super Admin is protected and always retains full control");
   const value = roleDefinitionSchema.parse(req.body);
   const actor = actorOf(req);
-  await db.runTransaction(async (tx) => {
+  await loggedTransaction(actor, async (tx, log) => {
     const lock = await assertControlAuthority(tx, actor);
     const ref = db.doc(`roleDefinitions/${id}`);
     const [old, assigned] = await Promise.all([
@@ -244,7 +258,7 @@ controlRouter.put("/roles/:id", async (req, res) => {
       updatedBy: actor.uid,
       updatedAt: new Date().toISOString(),
     });
-    log(tx, actor, "role.update", id, {
+    log("role.update", id, {
       permissions: value.permissions,
       active: value.active,
       previousPermissions:
@@ -342,12 +356,11 @@ controlRouter.post("/users/:uid/action", async (req, res) => {
       createdAt: new Date().toISOString(),
     });
   }
-  await db.collection("auditLogs").add({
+  await recordAudit({
     actorUid: actor.uid,
     actorName: actor.fullName,
     action: `user.${value.action}`,
     target: uid,
-    createdAt: new Date().toISOString(),
   });
   res.json({ completed: true });
 });
@@ -365,7 +378,7 @@ controlRouter.get("/runtime", async (_req, res) =>
 controlRouter.put("/runtime", async (req, res) => {
   const value = runtimeSchema.parse(req.body);
   const actor = actorOf(req);
-  await db.runTransaction(async (tx) => {
+  await loggedTransaction(actor, async (tx, log) => {
     const lock = await assertControlAuthority(tx, actor);
     const ref = db.doc("applicationSettings/runtime");
     const old = await tx.get(ref);
@@ -382,7 +395,7 @@ controlRouter.put("/runtime", async (req, res) => {
       },
       { merge: true },
     );
-    log(tx, actor, "runtime.update", "main", {
+    log("runtime.update", "main", {
       changedFields: Object.keys(value).filter(
         (key) => value[key as keyof typeof value] !== old.data()?.[key],
       ),
@@ -417,7 +430,7 @@ controlRouter.post("/jobs/email/:id/action", async (req, res) => {
   const id = uidSchema.parse(req.params.id);
   const action = z.enum(["retry", "cancel"]).parse(req.body.action);
   const actor = actorOf(req);
-  await db.runTransaction(async (tx) => {
+  await loggedTransaction(actor, async (tx, log) => {
     const lock = await assertControlAuthority(tx, actor);
     const ref = db.doc(`emailJobs/${id}`);
     const job = await tx.get(ref);
@@ -433,7 +446,7 @@ controlRouter.post("/jobs/email/:id/action", async (req, res) => {
         ? { status: "queued", attempts: 0, nextAttemptAt: null, error: null }
         : { status: "cancelled", cancelledAt: new Date().toISOString() },
     );
-    log(tx, actor, `email.${action}`, id);
+    log(`email.${action}`, id);
   });
   res.json({ completed: true });
 });

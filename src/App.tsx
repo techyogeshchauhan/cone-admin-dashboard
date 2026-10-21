@@ -59,6 +59,8 @@ import ConferenceEditor from "./ConferenceEditor";
 import InviteUser from "./InviteUser";
 const ImportCenter = lazy(() => import("./ImportCenter"));
 import MfaEnrollment from "./MfaEnrollment";
+import AppSplash from "./AppSplash";
+import LeaveDialog from "./LeaveDialog";
 import {
   ConferenceShowcase,
   ConferenceStrip,
@@ -362,6 +364,23 @@ function Empty({
     </div>
   );
 }
+// Whether this tab's history already holds the sign-out guard.
+const guardKey = "cone-leave-guard";
+function readGuard() {
+  try {
+    return sessionStorage.getItem(guardKey) === "armed";
+  } catch {
+    return false;
+  }
+}
+function writeGuard(armed: boolean) {
+  try {
+    if (armed) sessionStorage.setItem(guardKey, "armed");
+    else sessionStorage.removeItem(guardKey);
+  } catch {
+    /* Without storage a reload may add one more guard entry. */
+  }
+}
 export default function App() {
   const { branding } = useBranding();
   const [actor, setActor] = useState<Actor | null>(null),
@@ -390,9 +409,54 @@ export default function App() {
     setHistory((h) => ({ index, last: Math.max(h.last, index) }));
     setPage(next);
   }
+  // Leaving by the browser's Back signs out. On sign-in a guard entry is
+  // placed behind the first dashboard page; going back onto it asks first.
+  // The tab remembers the guard, so a reload does not stack another one.
+  const [leaving, setLeaving] = useState(false),
+    [signingOut, setSigningOut] = useState(false);
+  const signedIn = useRef(false),
+    currentPage = useRef(page);
+  currentPage.current = page;
+  function enterWorkspace(next: string) {
+    if (readGuard()) return landOn(next);
+    window.history.replaceState({ coneGuard: true }, "");
+    window.history.pushState({ conePage: next, index: 0 }, "");
+    writeGuard(true);
+    setHistory({ index: 0, last: 0 });
+    setPage(next);
+  }
+  async function leave() {
+    setSigningOut(true);
+    writeGuard(false);
+    try {
+      if (auth) await signOut(auth);
+    } finally {
+      setSigningOut(false);
+      setLeaving(false);
+      // Past the guard to the page before the dashboard. Opened directly,
+      // there is none, and the sign-in screen stays.
+      window.history.go(-2);
+    }
+  }
   useEffect(() => {
     const onPop = (event: PopStateEvent) => {
-      const state = event.state as { conePage?: string; index?: number } | null;
+      const state = event.state as {
+        conePage?: string;
+        index?: number;
+        coneGuard?: boolean;
+      } | null;
+      if (state?.coneGuard) {
+        // Signed out already: Back simply continues past the guard.
+        if (!signedIn.current) return void window.history.back();
+        // Stay on the dashboard while the question is asked.
+        window.history.pushState(
+          { conePage: currentPage.current, index: 0 },
+          "",
+        );
+        setHistory({ index: 0, last: 0 });
+        setLeaving(true);
+        return;
+      }
       if (!state?.conePage) return;
       setPage(state.conePage);
       setHistory((h) => ({ ...h, index: state.index ?? 0 }));
@@ -516,14 +580,17 @@ export default function App() {
           const me = await request<Actor>("/me");
           if (!active) return;
           setActor(me);
+          signedIn.current = true;
           if (landedUid.current !== user.uid) {
             landedUid.current = user.uid;
-            landOn(
+            enterWorkspace(
               navigation.find((n) => can(me, n.permission))?.key || "profile",
             );
           }
         } else {
           landedUid.current = null;
+          signedIn.current = false;
+          writeGuard(false);
           setActor(null);
         }
       } catch (e) {
@@ -540,12 +607,14 @@ export default function App() {
       unsubscribe();
     };
   }, [revision]);
-  if (checking)
-    return (
-      <div className="login-screen">
-        <Loading />
-      </div>
-    );
+  if (checking) return <AppSplash />;
+  const leaveDialog = leaving && (
+    <LeaveDialog
+      busy={signingOut}
+      onStay={() => setLeaving(false)}
+      onLeave={() => void leave()}
+    />
+  );
   if (!actor)
     return <Login error={error} retry={() => setRevision((r) => r + 1)} />;
   const current = navigation.find((n) => n.key === page);
@@ -816,6 +885,7 @@ export default function App() {
           </footer>
         </main>
       </div>
+      {leaveDialog}
     </div>
   );
 }
