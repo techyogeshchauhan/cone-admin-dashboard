@@ -59,6 +59,11 @@ import ConferenceEditor from "./ConferenceEditor";
 import InviteUser from "./InviteUser";
 const ImportCenter = lazy(() => import("./ImportCenter"));
 import MfaEnrollment from "./MfaEnrollment";
+import {
+  ConferenceShowcase,
+  ConferenceStrip,
+  usePublicConference,
+} from "./ConferenceShowcase";
 import { LoadMore, useDebounced, useNearScreen, usePagedList } from "./paging";
 import SearchBox, { matchesSearch, NoMatches } from "./SearchBox";
 import RoleWorkspace, {
@@ -822,6 +827,7 @@ function Login({
   retry: () => void;
 }) {
   const { branding } = useBranding();
+  const conference = usePublicConference();
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [note, setNote] = useState(""),
@@ -913,26 +919,36 @@ function Login({
   }
   return (
     <div className="login-screen">
-      <div className="login-art">
-        <BrandLogo />
-        <p className="eyebrow">CONFERENCE OPERATIONS & NETWORKING</p>
-        <h1>
-          A thoughtful space
-          <br />
-          for every detail.
-        </h1>
-        <p>
-          People. Programme. Possibilities.
-          <br />
-          Bring your conference together with {branding.applicationName}.
-        </p>
+      <div className={`login-art${conference ? " with-conference" : ""}`}>
+        <header className="login-brand">
+          <img src="/cone-mark.webp" alt="" width={34} height={34} />
+          <span>
+            <strong>CONE</strong> : Conference Operations & Networking
+            Environment
+          </span>
+        </header>
+        {conference ? (
+          <ConferenceShowcase conference={conference} />
+        ) : (
+          <>
+            <p className="eyebrow">CONFERENCE OPERATIONS & NETWORKING</p>
+            <h1>
+              A thoughtful space
+              <br />
+              for every detail.
+            </h1>
+            <p>
+              People. Programme. Possibilities.
+              <br />
+              Bring your conference together with {branding.applicationName}.
+            </p>
+          </>
+        )}
         <div className="orbit orbit-one" />
         <div className="orbit orbit-two" />
-        <span className="login-art-footer">
-          21st Uttarakhand State Science & Technology Congress
-        </span>
       </div>
       <div className="login-form">
+        {conference && <ConferenceStrip conference={conference} />}
         <span className="tag">
           <ShieldCheck size={15} /> ADMINISTRATIVE WORKSPACE
         </span>

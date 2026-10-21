@@ -136,6 +136,32 @@ export const conferenceSchema = z
     contactMobile: z.union([mobile, z.literal("")]).optional(),
     timezone: z.literal("Asia/Kolkata").default("Asia/Kolkata"),
     publicationStatus: z.enum(["draft", "published"]).default("draft"),
+    // Shown on the dashboard sign-in screen once published.
+    edition: z.string().trim().max(20).optional(),
+    theme: z.string().trim().max(300).optional(),
+    tagline: z.string().trim().max(200).optional(),
+    organizer: z.string().trim().max(200).optional(),
+    organizerAddress: z.string().trim().max(300).optional(),
+    website: z
+      .union([z.url({ protocol: /^https?$/ }), z.literal("")])
+      .optional(),
+    highlights: z.array(z.string().trim().min(1).max(60)).max(8).optional(),
+    logos: z
+      .array(
+        z
+          .object({
+            // A bundled logo, or one uploaded through the dashboard.
+            src: z
+              .string()
+              .regex(
+                /^\/(partners\/[a-z0-9-]+\.(webp|png)|api\/public\/conference-logo\/[0-9a-f-]{36})$/,
+              ),
+            label: z.string().trim().min(1).max(80),
+          })
+          .strict(),
+      )
+      .max(4)
+      .optional(),
   })
   .strict()
   .refine((v) => !v.startDate || !v.endDate || v.endDate >= v.startDate, {

@@ -109,7 +109,30 @@ export function fakeFirestore() {
         reads.push({ collection: path.split("/")[0], documents: 1 });
         return snap(path);
       },
+      set: async (data: Data, options?: { merge?: boolean }) =>
+        write(path, data, options),
     }),
+    // Writes apply when the callback finishes, as in a real transaction.
+    runTransaction: async (work: (tx: any) => Promise<unknown>) => {
+      const pending: (() => void)[] = [];
+      const result = await work({
+        get: async (ref: { path: string }) => snap(ref.path),
+        set: (
+          ref: { path: string },
+          data: Data,
+          options?: { merge?: boolean },
+        ) => pending.push(() => write(ref.path, data, options)),
+        create: (ref: { path: string }, data: Data) =>
+          pending.push(() => write(ref.path, data)),
+        update: (ref: { path: string }, data: Data) =>
+          pending.push(() => write(ref.path, data, { merge: true })),
+      });
+      pending.forEach((apply) => apply());
+      return result;
+    },
   };
+  function write(path: string, data: Data, options?: { merge?: boolean }) {
+    store.set(path, options?.merge ? { ...store.get(path), ...data } : data);
+  }
   return { db, store, reads };
 }

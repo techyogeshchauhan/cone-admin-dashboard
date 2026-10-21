@@ -125,15 +125,12 @@ export function BrandLogo({
   useEffect(() => setFailed(false), [branding]);
   return (
     <span className={className}>
-      {branding.logoUrl && !failed ? (
-        <img
-          src={branding.logoUrl}
-          alt={`${branding.applicationName} logo`}
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        branding.applicationName.slice(0, 1).toUpperCase()
-      )}
+      {/* Without an uploaded logo, the CONE mark bundled with the app. */}
+      <img
+        src={branding.logoUrl && !failed ? branding.logoUrl : "/cone-mark.webp"}
+        alt={`${branding.applicationName} logo`}
+        onError={() => setFailed(true)}
+      />
     </span>
   );
 }

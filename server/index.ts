@@ -183,6 +183,54 @@ app.get("/api/health", (_req, res) =>
   res.json({ status: "ok", service: "cone-admin-api" }),
 );
 registerPublicBranding(app, storage);
+// What the sign-in screen shows about the conference: only published
+// details, and only the fields meant for the public.
+const publicFields = [
+  "edition",
+  "name",
+  "shortName",
+  "theme",
+  "tagline",
+  "startDate",
+  "endDate",
+  "venue",
+  "organizer",
+  "organizerAddress",
+  "website",
+  "highlights",
+  "logos",
+] as const;
+const publicConferences = memo<Record<string, unknown>>();
+app.get("/api/public/conference", async (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json(
+    await publicConferences("main", async () => {
+      const data = (await db.doc("conference/main").get()).data();
+      if (data?.publicationStatus !== "published") return { published: false };
+      return {
+        published: true,
+        ...Object.fromEntries(
+          publicFields
+            .filter((key) => data[key] !== undefined && data[key] !== "")
+            .map((key) => [key, data[key]]),
+        ),
+      };
+    }),
+  );
+});
+app.get("/api/public/conference-logo/:id", (req, res, next) => {
+  const id = z.uuid().parse(req.params.id);
+  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res
+    .type("webp")
+    .sendFile(path.join(storage, `conference-logo-${id}.webp`), (error) => {
+      if (!error) return;
+      if ((error as { status?: number }).status === 404)
+        res.status(404).json({ error: "Logo not found" });
+      else next(error);
+    });
+});
 registerEmailOtp(app);
 registerTestingVerification(app);
 registerDevRoleLogin(app);
@@ -458,6 +506,33 @@ app.put("/api/conference", async (req, res) => {
   });
   await audit(actorOf(req), "conference.update", "main");
   res.json(value);
+});
+// An organiser or partner logo for the sign-in screen. It is stored on the
+// server and becomes visible once listed in the conference's logos.
+app.post("/api/conference/logos", upload.single("logo"), async (req, res) => {
+  requirePermission(req, "conference");
+  if (!req.file) fail("Choose a logo image");
+  const image = sharp(req.file.buffer, { limitInputPixels: 4096 * 4096 });
+  const meta = await image.metadata().catch(() => null);
+  if (
+    !meta ||
+    !["jpeg", "png", "webp"].includes(meta.format || "") ||
+    (meta.pages || 1) > 1
+  )
+    fail("Use a static JPEG, PNG or WebP image");
+  const id = randomUUID();
+  await image
+    .rotate()
+    .resize({
+      width: 480,
+      height: 480,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .webp({ quality: 90 })
+    .toFile(path.join(storage, `conference-logo-${id}.webp`));
+  await audit(actorOf(req), "conference.logo.upload", id);
+  res.json({ src: `/api/public/conference-logo/${id}` });
 });
 app.get("/api/settings", async (req, res) => {
   requirePermission(req, "settings");
