@@ -17,6 +17,10 @@ import {
 } from "./control.js";
 import { resolveRole } from "../shared/control.js";
 import { registerTestingVerification } from "./testing-verification.js";
+import {
+  registerTestAccountAdmin,
+  registerTestAccountLogin,
+} from "./test-accounts.js";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -232,6 +236,7 @@ app.get("/api/public/conference-logo/:id", (req, res, next) => {
     });
 });
 registerEmailOtp(app);
+registerTestAccountLogin(app);
 registerTestingVerification(app);
 registerDevRoleLogin(app);
 registerMobileSelfie(app, storage);
@@ -374,6 +379,7 @@ app.use("/api", async (req, res, next) => {
 app.use("/api/control", controlRouter);
 registerBrandingAdmin(app, storage);
 registerSelfieAdmin(app, storage);
+registerTestAccountAdmin(app);
 app.get("/api/workspace-settings", async (_req, res) => {
   const config: Awaited<ReturnType<typeof runtimeConfiguration>> =
     res.locals.runtime ?? (await runtimeConfiguration());

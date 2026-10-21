@@ -10,7 +10,7 @@ import { auth, db } from "./firebase.js";
 import { mailTransport, sender } from "./mail.js";
 import { mobile } from "../shared/schema.js";
 
-const identitySchema = z
+export const identitySchema = z
   .object({
     name: z.string().trim().min(2).max(150),
     email: z
@@ -38,7 +38,7 @@ const notFound = () =>
     ),
     { status: 404 },
   );
-const normalizedName = (name: string) =>
+export const normalizedName = (name: string) =>
   name.toLowerCase().replace(/\./g, " ").trim().split(/\s+/).join(" ");
 const ttl = 5 * 60_000;
 function key() {

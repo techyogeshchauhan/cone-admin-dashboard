@@ -19,14 +19,19 @@ service cloud.firestore {
       return request.auth != null
         && request.auth.token.email != null
         && request.auth.token.email_verified == true
-        && request.auth.token.get('login_method', '') == 'email_otp'
+        && request.auth.token.get('login_method', '') in ['email_otp', 'test_account']
         && request.auth.token.get('login_audience', '') == 'mobile'
         && request.auth.token.firebase.sign_in_provider == 'custom'
         && request.auth.token.get('otp_verified_at', 0) * 1000 <= request.time.toMillis()
         && request.time.toMillis() < (request.auth.token.get('otp_verified_at', 0) + 86400) * 1000
         && exists(/databases/$(database)/documents/people/$(myEmail()))
         && get(/databases/$(database)/documents/people/$(myEmail())).data.get('archivedAt', null) == null
-        && get(/databases/$(database)/documents/people/$(myEmail())).data.get('isDemo', false) == false
+        // Demo records are readable only once a Super Admin marks them as test accounts.
+        && (get(/databases/$(database)/documents/people/$(myEmail())).data.get('isDemo', false) == false
+            || get(/databases/$(database)/documents/people/$(myEmail())).data.get('accountType', '') == 'test')
+        // A test-account session ends when the flag is removed.
+        && (request.auth.token.get('login_method', '') == 'email_otp'
+            || get(/databases/$(database)/documents/people/$(myEmail())).data.get('accountType', '') == 'test')
         && get(/databases/$(database)/documents/people/$(myEmail())).data.registrationStatus in ['pending', 'confirmed']
         && (!exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid))
             || get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.status == 'active');

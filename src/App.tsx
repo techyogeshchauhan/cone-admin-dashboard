@@ -1427,6 +1427,12 @@ function Table({
                       {label(row[c])}
                     </span>
                   )}
+                  {c === "fullName" && row.accountType === "test" && (
+                    <>
+                      {" "}
+                      <span className="badge">Test login</span>
+                    </>
+                  )}
                 </td>
               ))}
               {(onEdit || onDelete) && (
@@ -1816,6 +1822,9 @@ function Editor({
               </label>
             ))}
           </div>
+          {module === "participants" && row && actor.role === "superadmin" && (
+            <TestAccountToggle row={row} />
+          )}
           <div className="form-actions">
             <button type="button" className="secondary" onClick={close}>
               Cancel
@@ -1857,6 +1866,46 @@ function Editor({
           </div>
         </form>
       </section>
+    </div>
+  );
+}
+// Saved on its own, straight away: it is not part of the registration form.
+function TestAccountToggle({ row }: { row: Row }) {
+  const [enabled, setEnabled] = useState(row.accountType === "test"),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  return (
+    <div className="full-width">
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={busy}
+          onChange={async (e) => {
+            const next = e.target.checked;
+            setBusy(true);
+            setError("");
+            try {
+              await request(
+                `/people/${encodeURIComponent(row.id)}/test-account`,
+                { method: "PUT", body: JSON.stringify({ enabled: next }) },
+              );
+              setEnabled(next);
+              row.accountType = next ? "test" : undefined;
+            } catch (e) {
+              setError((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        />
+        Test account: mobile app login skips email OTP
+      </label>
+      <p className="inline-note">
+        Anyone who knows this person's name, email and mobile can sign in. Use
+        only for test accounts, never for real participants.
+      </p>
+      <Message error={error} />
     </div>
   );
 }
