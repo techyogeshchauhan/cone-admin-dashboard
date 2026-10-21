@@ -1957,11 +1957,10 @@ pre {
   letter-spacing: 1px;
   color: #19e3dc;
 }
-/* The conference panel stays in view while the form scrolls, so its
-   organiser footer is always on screen. */
+/* Keep the conference beside the form; longer content scrolls within it. */
 .login-art.with-conference {
   justify-content: flex-start;
-  padding: 36px 7% 32px;
+  padding: 36px clamp(32px, 4vw, 80px) 32px;
   position: sticky;
   top: 0;
   align-self: flex-start;
@@ -1973,10 +1972,12 @@ pre {
 .login-art.with-conference .orbit {
   display: none;
 }
+/* Centred in the space below the header whatever the conference lists;
+   auto margins give way to scrolling when the content is taller. */
 .conference-showcase {
   position: relative;
   z-index: 1;
-  flex: 1;
+  margin: auto 0;
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -2077,7 +2078,6 @@ pre {
   color: #8fb3c6;
 }
 .conference-organizer {
-  margin-top: auto;
   padding-top: 18px;
   border-top: 1px solid #ffffff21;
   display: grid;
@@ -2148,6 +2148,82 @@ pre {
 .conference-strip {
   display: none;
 }
+/* Use the desktop panel for larger logos and readable conference details. */
+@media (min-width: 1200px) {
+  .login-art.with-conference .login-brand {
+    font-size: 14px;
+  }
+  .login-art.with-conference .login-brand img {
+    width: 40px;
+    height: 40px;
+  }
+  .conference-showcase {
+    gap: clamp(24px, 1.4vw, 28px);
+  }
+  .conference-heading {
+    gap: 22px;
+  }
+  .conference-edition {
+    font-size: clamp(76px, 4.8vw, 92px);
+  }
+  .conference-edition sup {
+    font-size: 28px;
+    top: -24px;
+  }
+  .login-art .conference-heading h1 {
+    font-size: clamp(30px, 1.9vw, 36px);
+  }
+  .conference-theme > span {
+    font-size: 12px;
+    padding: 5px 12px;
+  }
+  .login-art .conference-theme p {
+    font-size: clamp(18px, 1.05vw, 20px);
+  }
+  .conference-facts span {
+    font-size: clamp(14px, 0.85vw, 16px);
+    padding: 10px 16px;
+  }
+  .conference-facts svg,
+  .conference-highlights svg {
+    width: 20px;
+    height: 20px;
+  }
+  .conference-highlights li {
+    font-size: 14px;
+    padding: 12px;
+  }
+  .login-art .conference-tagline {
+    font-size: 13px;
+  }
+  .conference-logos {
+    gap: 14px;
+  }
+  .conference-logos li {
+    max-width: 360px;
+    padding: 10px 18px 10px 10px;
+  }
+  .conference-logos img {
+    width: clamp(68px, 4vw, 80px);
+    height: clamp(68px, 4vw, 80px);
+  }
+  .conference-logos span {
+    font-size: 14px;
+  }
+  .login-art .conference-organizer p {
+    gap: 4px;
+    font-size: 15px;
+  }
+  .conference-organizer p > span {
+    font-size: 12px;
+  }
+  .conference-organizer small {
+    font-size: 13px;
+  }
+  .conference-organizer a {
+    font-size: 14px;
+  }
+}
 @media (max-width: 1150px) {
   .conference-highlights {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2214,4 +2290,141 @@ pre {
   align-items: center;
   gap: 6px;
   cursor: pointer;
+}
+/* Full-screen wait while the session is checked, in the CONE colours. */
+.app-splash {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px 16px;
+  text-align: center;
+  background: radial-gradient(circle at 50% 38%, #0b3a5c 0%, #052543 60%);
+  color: #f3f9fc;
+}
+.app-splash-mark {
+  position: relative;
+  width: 128px;
+  height: 128px;
+  display: grid;
+  place-items: center;
+}
+.app-splash-mark img {
+  width: 88px;
+  height: 88px;
+  border-radius: 24px;
+  animation: splash-breathe 2.4s ease-in-out infinite;
+}
+.app-splash-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid #ffffff14;
+  border-top-color: #19e3dc;
+  border-right-color: #19e3dc;
+  animation: spin 1.1s linear infinite;
+}
+.app-splash-name {
+  margin: 4px 0 0;
+  display: grid;
+  gap: 4px;
+}
+.app-splash-name strong {
+  font-family: "Manrope", sans-serif;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 4px;
+  color: #19e3dc;
+}
+.app-splash-name span {
+  font-size: 12px;
+  letter-spacing: 0.4px;
+  color: #b7cdd8;
+}
+.app-splash-stage {
+  margin: 6px 0 0;
+  min-height: 1.5em;
+  max-width: 340px;
+  font-size: 14px;
+  color: #f3f9fc;
+}
+.app-splash-stage.slow {
+  color: #f4b445;
+}
+.app-splash-bar {
+  width: min(260px, 70vw);
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #ffffff1a;
+}
+.app-splash-bar span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #19e3dc, #f4b445);
+  animation: splash-slide 1.4s ease-in-out infinite;
+}
+.app-splash-conference {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: #8fb3c6;
+}
+@keyframes splash-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes splash-breathe {
+  50% {
+    transform: scale(0.94);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-splash-ring,
+  .app-splash-mark img,
+  .app-splash-bar span {
+    animation: none;
+  }
+  .app-splash-bar span {
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+.leave-dialog {
+  max-width: 420px;
+  text-align: center;
+}
+.leave-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 6px;
+  border-radius: 14px;
+  background: #fde2e1;
+  color: #b42318;
+}
+.leave-dialog h2 {
+  margin: 6px 0;
+}
+.leave-dialog p {
+  margin: 0 0 18px;
+  color: #5d7385;
+  line-height: 1.6;
+}
+.leave-dialog .form-actions {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.primary.danger {
+  background: #b42318;
+  border-color: #b42318;
 }
