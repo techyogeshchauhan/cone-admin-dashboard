@@ -96,6 +96,51 @@ test("the sign-in screen presents the published conference", async ({
   await page.screenshot({ path: testInfo.outputPath("sign-in-mobile.png") });
 });
 
+for (const viewport of [
+  { width: 1920, height: 875 },
+  { width: 900, height: 700 },
+]) {
+  for (const details of [
+    { label: "no highlights", highlights: [], tagline: conference.tagline },
+    { label: "no highlights or tagline", highlights: [], tagline: "" },
+    {
+      label: "one highlight",
+      highlights: conference.highlights.slice(0, 1),
+      tagline: conference.tagline,
+    },
+  ]) {
+    test(`${details.label} leaves no gap above the organiser at ${viewport.width}px`, async ({
+      page,
+    }, testInfo) => {
+      await page.setViewportSize(viewport);
+      await serve(page, { ...conference, ...details });
+      await page.goto("/");
+      const art = page.locator(".login-art");
+      const organiser = art.locator(".conference-organizer");
+      await expect(organiser).toBeVisible();
+      await expect(art.locator(".conference-highlights li")).toHaveCount(
+        details.highlights.length,
+      );
+      if (!details.highlights.length)
+        await expect(art.locator(".conference-highlights")).toHaveCount(0);
+      const preceding = await art
+        .locator(details.tagline ? ".conference-tagline" : ".conference-facts")
+        .boundingBox();
+      const footer = await organiser.boundingBox();
+      // Removing optional content must leave only the normal section spacing.
+      const gap = footer!.y - (preceding!.y + preceding!.height);
+      expect(gap).toBeGreaterThanOrEqual(20);
+      expect(gap).toBeLessThan(30);
+      await organiser.getByRole("link").scrollIntoViewIfNeeded();
+      await expect(organiser.getByRole("link")).toBeInViewport();
+      if (details.label === "no highlights")
+        await page.screenshot({
+          path: testInfo.outputPath("no-highlights.png"),
+        });
+    });
+  }
+}
+
 test("a name that already starts with the edition is not repeated", async ({
   page,
 }) => {
