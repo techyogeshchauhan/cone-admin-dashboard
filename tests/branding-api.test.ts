@@ -47,6 +47,7 @@ describe("application branding API permissions", () => {
     expect(response.body).toEqual({
       applicationName: "Aurora",
       logoId: null,
+      logoPath: null,
       logoUrl: null,
       version: 3,
     });

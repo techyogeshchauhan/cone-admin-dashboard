@@ -11,6 +11,7 @@ import { request } from "./firebase";
 export type Branding = {
   applicationName: string;
   logoId: string | null;
+  logoPath?: string | null;
   logoUrl: string | null;
   version: number;
 };

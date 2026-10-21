@@ -17,12 +17,17 @@ const inputSchema = z
     removeLogo: z.enum(["true", "false"]).optional(),
   })
   .strict();
+// Stored without a host, so moving the server never leaves a stale IP or
+// domain in the database. Clients prefix their own API base URL.
+export function logoPath(id: string) {
+  return `/api/branding/logo/${id}`;
+}
 export function logoUrl(id: string) {
   const origin = (
     process.env.PUBLIC_API_BASE_URL ||
     `http://localhost:${process.env.PORT || 8080}`
   ).replace(/\/$/, "");
-  return `${origin}/api/branding/logo/${id}`;
+  return `${origin}${logoPath(id)}`;
 }
 export async function publicBranding() {
   const [runtime, branding] = await Promise.all([
@@ -33,6 +38,7 @@ export async function publicBranding() {
   return {
     applicationName: runtime.applicationName,
     logoId,
+    logoPath: logoId ? logoPath(logoId) : null,
     logoUrl: logoId ? logoUrl(logoId) : null,
     version: runtime.version,
   };
@@ -50,7 +56,7 @@ export function registerPublicBranding(app: Express, storage: string) {
         // A logo whose file is not on this server would only produce 404s.
         const file = path.join(storage, `branding-${value.logoId}.webp`);
         if (value.logoId && !(await stat(file).catch(() => null)))
-          return { ...value, logoId: null, logoUrl: null };
+          return { ...value, logoId: null, logoPath: null, logoUrl: null };
         return value;
       }),
     );
@@ -188,7 +194,7 @@ export function registerBrandingAdmin(app: Express, storage: string) {
           tx.set(brandingRef, {
             applicationName: value.applicationName,
             logoId,
-            logoUrl: logoId ? logoUrl(logoId) : null,
+            logoPath: logoId ? logoPath(logoId) : null,
             updatedAt,
             version: value.version + 1,
           });

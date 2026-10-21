@@ -197,10 +197,11 @@ try {
   assert.equal(metadata.format, "webp");
   const published = await db.doc("conference/branding").get();
   assert.equal(published.data()!.applicationName, "Aurora Congress");
-  assert.match(
-    published.data()!.logoUrl,
-    /^http:\/\/localhost:8080\/api\/branding\/logo\//,
+  assert.equal(
+    published.data()!.logoPath,
+    `/api/branding/logo/${brand.body.logoId}`,
   );
+  assert.equal(published.data()!.logoUrl, undefined);
   const publicDocument = await fetch(
     `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-cone-otp/databases/(default)/documents/conference/branding`,
   );
