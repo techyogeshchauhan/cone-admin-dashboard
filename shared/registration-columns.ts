@@ -27,6 +27,7 @@ export function fieldFor(header: string) {
   if (k === "softcopy") return "softCopy";
   if (k === "district") return "district";
   if (k.startsWith("acc")) return "accommodation";
+  if (k === "tarequired") return "travelAssistance";
   if (k === "dob") return "dob";
   if (k === "rollno") return "rollNo";
   if (k === "feesreceived" || k === "ddreceived") return "feesReceived";

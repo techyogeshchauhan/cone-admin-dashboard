@@ -69,6 +69,13 @@ export const participantSchema = identity
     accommodation: z.enum(["Yes", "No"]).default("No"),
     softCopy: z.enum(["Yes", "No"]).default("No"),
     earlierAwardee: z.enum(["Yes", "No"]).default("No"),
+    workingAs: z.string().trim().max(1000).optional(),
+    gender: z.string().trim().max(50).optional(),
+    district: z.string().trim().max(200).optional(),
+    dob: z.string().trim().max(100).optional(),
+    rollNo: z.string().trim().max(200).optional(),
+    travelAssistance: z.string().trim().max(200).optional(),
+    remark: z.string().trim().max(2000).optional(),
   })
   .strict();
 export const userSchema = identity
@@ -191,7 +198,7 @@ export const staffSchema = z
   });
 export const feeSchema = z
   .object({
-    participantEmail: z.email(),
+    participantEmail: z.email().transform((value) => value.toLowerCase()),
     amount: z.coerce.number().int().min(0),
     currency: z.literal("INR"),
     status: z.enum(["pending", "received", "waived", "refunded"]),

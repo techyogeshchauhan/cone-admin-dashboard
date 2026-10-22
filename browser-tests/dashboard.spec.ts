@@ -174,9 +174,13 @@ test("signs in, navigates the dashboard, and submits validated participant field
     "volunteer",
   ]) {
     const databaseRole = role === "organizer" ? "organiser" : role;
-    const response = page.waitForResponse((r) =>
-      r.url().includes(`/api/records/participants?role=${databaseRole}`),
-    );
+    const response = page.waitForResponse((r) => {
+      const url = new URL(r.url());
+      return (
+        url.pathname === "/api/records/participants" &&
+        url.searchParams.get("role") === databaseRole
+      );
+    });
     await page
       .getByRole("button", { name: `View ${role} participants`, exact: true })
       .click();

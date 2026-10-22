@@ -1,0 +1,177 @@
+.table-wrap {
+  /* Keep visually hidden action headings inside the table's scroll area. */
+  position: relative;
+}
+.table-wrap.participant-table-wrap {
+  max-height: 65vh;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  scrollbar-color: auto;
+}
+.table-wrap.participant-table-wrap table {
+  min-width: 1900px;
+}
+.participant-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  white-space: nowrap;
+}
+.participant-table-wrap td {
+  white-space: nowrap;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.participant-table-wrap td > span:not(.badge) {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.participant-table-wrap::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.participant-table-wrap::-webkit-scrollbar-track {
+  background: #eaf0f4;
+}
+.participant-table-wrap::-webkit-scrollbar-thumb {
+  background: #849eaf;
+  border: 2px solid #eaf0f4;
+  border-radius: 6px;
+}
+.cell-view-button {
+  white-space: nowrap;
+}
+.table-cell-dialog.modal {
+  border: 0;
+  max-width: 640px;
+  width: calc(100% - 32px);
+  margin: auto;
+}
+.table-cell-dialog::backdrop {
+  background: #0a233b77;
+  backdrop-filter: blur(5px);
+}
+.table-cell-dialog h2 {
+  text-transform: capitalize;
+}
+.cell-detail-value {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  color: #355a70;
+}
+.record-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
+  font-size: 12px;
+  color: #5e7586;
+}
+.record-pagination > div {
+  display: flex;
+  gap: 10px;
+}
+.record-details {
+  margin: 20px 0 0;
+}
+.department-records-page .panel-heading {
+  align-items: flex-start;
+}
+.department-controls {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.department-controls > label {
+  flex: 1;
+  min-width: 0;
+}
+.department-controls select {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+.department-source {
+  font-size: 12px;
+  color: #6d879a;
+  overflow-wrap: anywhere;
+}
+.department-authors {
+  margin-top: 24px;
+}
+.department-authors h3 {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.department-author-search {
+  max-width: 520px;
+}
+.department-author-table {
+  max-height: 45dvh;
+  overflow: auto;
+  position: relative;
+}
+.department-author-table table {
+  min-width: 760px;
+}
+.department-author-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.department-author-table td {
+  white-space: nowrap;
+}
+.department-cell-preview {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.department-author-details {
+  padding: 12px 18px;
+  background: #f5f8fa;
+  border-radius: 8px;
+}
+@media (max-width: 700px) {
+  .department-records-page .panel-heading {
+    flex-wrap: wrap;
+  }
+  .department-author-details > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+.record-details > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 40%) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  margin: 16px 0;
+}
+.record-details dt {
+  color: #6d879a;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.record-details dd {
+  margin: 0;
+  color: #355a70;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 520px) {
+  .record-details > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}

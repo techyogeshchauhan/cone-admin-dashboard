@@ -9,7 +9,8 @@ import {
   Layers,
   type LucideIcon,
 } from "lucide-react";
-import { can, type Actor } from "../shared/schema";
+import { type Actor } from "../shared/schema";
+import { canOpenWorkspace } from "../shared/role-fields";
 type RoleDesign = {
   label: string;
   title: string;
@@ -95,7 +96,7 @@ export const sectionGroups = [
   { title: "Workspace", pages: ["overview", "profile", "control"] },
   {
     title: "People & access",
-    pages: ["participants", "users", "testAccounts"],
+    pages: ["participants", "departmentRecords", "users", "testAccounts"],
   },
   {
     title: "Conference planning",
@@ -126,6 +127,8 @@ export const pageDescriptions: Record<string, string> = {
   overview: "Your conference activity and the next steps that matter.",
   control: "Manage access, configuration, and operations from one place.",
   participants: "Find participants and keep registration details up to date.",
+  departmentRecords:
+    "Browse Excel author records by department and download department-wise records.",
   users: "Manage workspace accounts, roles, and access.",
   testAccounts:
     "Accounts that sign in to the mobile app without an email code.",
@@ -164,7 +167,9 @@ export function roleDesign(role: string): RoleDesign {
 export type WorkspaceLink = { key: string; label: string; permission: string };
 export function permittedShortcuts(actor: Actor, links: WorkspaceLink[]) {
   const design = roleDesign(actor.role);
-  const allowed = links.filter((link) => can(actor, link.permission));
+  const allowed = links.filter((link) =>
+    canOpenWorkspace(actor, link.permission),
+  );
   const ranked = [...design.priorities, ...allowed.map((link) => link.key)];
   return [...new Set(ranked)]
     .map((key) => allowed.find((link) => link.key === key))
@@ -186,7 +191,7 @@ export default function RoleWorkspace({
   const Icon = design.icon;
   const shortcuts = permittedShortcuts(actor, links);
   const sectionCount = links.filter((link) =>
-    can(actor, link.permission),
+    canOpenWorkspace(actor, link.permission),
   ).length;
   function open(key: string) {
     if (key === page) {

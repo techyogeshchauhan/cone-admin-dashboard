@@ -57,7 +57,10 @@ export function fakeFirestore() {
         if (state.after !== undefined) {
           const id =
             typeof state.after === "string" ? state.after : state.after.id;
-          rows = rows.slice(rows.findIndex((r) => r.id === id) + 1);
+          rows =
+            typeof state.after === "string"
+              ? rows.filter((r) => r.id > id)
+              : rows.slice(rows.findIndex((r) => r.id === id) + 1);
         }
         if (state.limit !== undefined) rows = rows.slice(0, state.limit);
         reads.push({ collection: name, documents: rows.length || 1 });
