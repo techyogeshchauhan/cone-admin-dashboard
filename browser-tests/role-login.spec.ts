@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { expect, test } from "@playwright/test";
 import { dashboardTestRoles } from "../shared/dashboard-test-roles";
 for (const { role, label } of dashboardTestRoles) {
