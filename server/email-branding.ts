@@ -2,7 +2,7 @@ import { db } from "./firebase.js";
 import type { EmailBrand } from "../shared/email-design.js";
 import { memo } from "./request-cache.js";
 
-const cached = memo<EmailBrand>();
+const cached = memo<EmailBrand>({ tags: ["branding"] });
 
 /** Public branding only. Never let an unavailable logo/settings read block mail. */
 export async function emailBranding(): Promise<EmailBrand> {

@@ -96,6 +96,21 @@ describe("email OTP authentication", () => {
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
   });
+  it("preserves request/verification security audits without OTP secrets", async () => {
+    const challenge = await issue();
+    await verifyEmailOtp(challenge);
+    const audit = [...records.entries()]
+      .filter(([path]) => path.startsWith("auditLogs/"))
+      .map(([, data]) => data);
+    expect(audit.map((entry) => entry.action)).toEqual([
+      "auth.otp.request",
+      "auth.otp.verified",
+    ]);
+    expect(audit.every((entry) => entry.target === challenge.challengeId)).toBe(
+      true,
+    );
+    expect(JSON.stringify(audit)).not.toContain(challenge.code);
+  });
   it("sends a code but returns no code or session credential before verification", async () => {
     const result = await requestEmailOtp(details, "ip");
     await vi.waitFor(() =>

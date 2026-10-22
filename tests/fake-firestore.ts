@@ -34,7 +34,9 @@ export function fakeFirestore() {
             ...state.filters,
             op === "array-contains"
               ? (d) => Array.isArray(d[field]) && d[field].includes(value)
-              : (d) => d[field] === value,
+              : op === ">"
+                ? (d) => typeof d[field] === typeof value && d[field] > value!
+                : (d) => d[field] === value,
           ],
         }),
       orderBy: (field: string, dir: "asc" | "desc" = "asc") =>
@@ -119,7 +121,7 @@ export function fakeFirestore() {
     runTransaction: async (work: (tx: any) => Promise<unknown>) => {
       const pending: (() => void)[] = [];
       const result = await work({
-        get: async (ref: { path: string }) => snap(ref.path),
+        get: async (ref: any) => (ref.path ? snap(ref.path) : ref.get()),
         set: (
           ref: { path: string },
           data: Data,

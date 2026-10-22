@@ -1,8 +1,16 @@
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { db } from "./firebase.js";
-import { mailTransport, sender } from "./mail.js";
-import { runtimeConfiguration } from "./control.js";
+import { mailTransport, sender, smtpConfiguration } from "./mail.js";
+import {
+  QueueSchedule,
+  nextDue,
+  retryDelay,
+  type JobData,
+  type QueueDocument,
+} from "./worker-queue.js";
+import { acquireWorkerLease, leaderRenewMs } from "./worker-lease.js";
+export { nextDue } from "./worker-queue.js";
 import { firebaseOutage } from "./firebase-errors.js";
 import { renderEmail } from "../shared/email-design.js";
 import { emailBranding } from "./email-branding.js";
@@ -18,23 +26,43 @@ process.on("SIGTERM", () => {
   wake();
 });
 const active = ["queued", "retry", "processing"];
-export async function tick() {
-  if (!(await runtimeConfiguration()).emailEnabled) return "disabled";
-  const jobs = await db
-    .collection("emailJobs")
-    .where("status", "in", active)
-    .limit(50)
-    .get();
+export async function tick(
+  documents: QueueDocument[],
+  options: {
+    enabled?: boolean;
+    leader?: Awaited<ReturnType<typeof acquireWorkerLease>>;
+    observed?: (document: QueueDocument, data: JobData | null) => void;
+  } = {},
+) {
+  if (options.enabled === false) return "disabled";
   let claimed = 0;
-  for (const document of jobs.docs) {
+  for (const document of documents) {
     if (stopping) return claimed;
+    if (nextDue([document.data()]) !== 0) continue;
     const lease = randomUUID();
+    let observed: JobData | null = null;
+    let disabled = false;
     const job = await db.runTransaction(async (tx) => {
-      const snapshot = await tx.get(document.ref);
+      disabled = false;
+      observed = null;
+      const snapshot = await tx.get(
+        document.ref as import("firebase-admin/firestore").DocumentReference,
+      );
+      const data = snapshot.data();
+      observed = data ?? null;
+      if (!data || !["queued", "retry", "processing"].includes(data.status))
+        return null;
+      if (nextDue([data]) !== 0) return null;
       const runtime = await tx.get(db.doc("applicationSettings/runtime"));
-      if (runtime.data()?.emailEnabled === false) return null;
-      const data = snapshot.data()!;
-      if (!["queued", "retry", "processing"].includes(data.status)) return null;
+      if (options.leader) {
+        const leader = await tx.get(options.leader.ref);
+        if (!options.leader.valid(leader.data(), leader.readTime.toMillis()))
+          throw new Error("WORKER_LEASE_LOST");
+      }
+      if (runtime.data()?.emailEnabled === false) {
+        disabled = true;
+        return null;
+      }
       if (
         data.status === "processing" &&
         Date.parse(data.leaseUntil) > Date.now()
@@ -47,6 +75,7 @@ export async function tick() {
           status: "failed",
           error: "Maximum delivery attempts reached",
         });
+        observed = null;
         return null;
       }
       tx.update(document.ref, {
@@ -57,17 +86,22 @@ export async function tick() {
       });
       return data;
     });
-    if (!job) continue;
+    if (disabled) return "disabled";
+    if (!job) {
+      options.observed?.(document, observed);
+      continue;
+    }
     claimed++;
     try {
       const text = String(job.body).replaceAll(
         "{{name}}",
         String(job.recipientName || "Participant"),
       );
+      const config = await smtpConfiguration();
       await (
-        await mailTransport()
+        await mailTransport(config)
       ).sendMail({
-        from: await sender(),
+        from: await sender(config),
         to: job.recipient,
         subject: job.subject,
         text,
@@ -78,14 +112,8 @@ export async function tick() {
         }),
         messageId: `<${document.id}@cone.local>`,
       });
-      await document.ref.update({
-        status: "sent",
-        sentAt: new Date().toISOString(),
-        deliveryFormat: "html",
-        rendererVersion: "cone-branded-v1",
-        error: null,
-      });
     } catch (error) {
+      if (firebaseOutage(error)) throw error;
       const code = (error as { code?: string }).code;
       await document.ref.update({
         status: "retry",
@@ -94,56 +122,79 @@ export async function tick() {
           Date.now() + Math.min(3600000, 30000 * 2 ** (job.attempts || 0)),
         ).toISOString(),
       });
+      continue;
     }
+    await document.ref.update({
+      status: "sent",
+      sentAt: new Date().toISOString(),
+      deliveryFormat: "html",
+      rendererVersion: "cone-branded-v1",
+      error: null,
+    });
   }
   return claimed;
 }
 
-// Milliseconds until the earliest job can be sent: queued jobs now, retries
-// at nextAttemptAt, abandoned "processing" jobs when their lease ends.
-// Null when nothing is waiting.
-export function nextDue(jobs: Record<string, unknown>[], now = Date.now()) {
-  let due: number | null = null;
-  for (const job of jobs) {
-    const at =
-      job.status === "processing"
-        ? Date.parse(String(job.leaseUntil))
-        : job.nextAttemptAt
-          ? Date.parse(String(job.nextAttemptAt))
-          : now;
-    const when = Number.isNaN(at) ? now : at;
-    due = due === null ? when : Math.min(due, when);
-  }
-  return due === null ? null : Math.max(0, due - now);
-}
-
+// One wait primitive for normal notifications. Error backoff uses an absolute
+// deadline: snapshot feedback cannot shorten it. Shutdown always wakes it.
 const sleep = (ms: number) =>
   new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    const timer = setTimeout(resolve, Math.min(ms, 2147483647));
     wake = () => {
       clearTimeout(timer);
       resolve();
     };
   });
-const idle = 600000;
-const pausedFor = (error: unknown) =>
-  firebaseOutage(error)?.kind === "quota" ? 300000 : 15000;
 
-// The queue is watched with a Firestore listener instead of polled: an idle
-// listener costs no reads, and a newly queued email wakes the worker at once.
-// (Polling every few seconds cost about 57,000 reads a day, more than the
-// whole free daily quota.)
-if (process.env.NODE_ENV !== "test") {
-  console.log("CONE email worker started (cone-branded-v1, HTML + plain text)");
-  let jobs: Record<string, unknown>[] = [];
+export async function runWorker(signal?: AbortSignal) {
+  const stop = () => wake();
+  const leader = await acquireWorkerLease(db);
+  if (!leader) {
+    console.log(
+      JSON.stringify({
+        event: "email_worker_duplicate",
+        project: process.env.FIREBASE_PROJECT_ID,
+        pid: process.pid,
+      }),
+    );
+    return "standby" as const;
+  }
+  signal?.addEventListener("abort", stop, { once: true });
+  console.log(
+    JSON.stringify({
+      event: "email_worker_started",
+      project: process.env.FIREBASE_PROJECT_ID,
+      pid: process.pid,
+    }),
+  );
+  const schedule = new QueueSchedule();
+  const switches: { enabled: boolean | null; revision: number } = {
+    enabled: null,
+    revision: 0,
+  };
   let listenerError: unknown = null;
-  const listen = () =>
-    db
+  let failed = 0;
+  let notBefore = 0;
+  let renewAt = Date.now() + leaderRenewMs;
+  let unsubscribe = () => {};
+  let restart = true;
+  const stats = {
+    snapshots: 0,
+    activeJobs: 0,
+    candidates: 0,
+    sentOrRetried: 0,
+    failures: 0,
+    leadershipRenewals: 0,
+  };
+  const listen = () => {
+    const queue = db
       .collection("emailJobs")
       .where("status", "in", active)
       .onSnapshot(
         (snapshot) => {
-          jobs = snapshot.docs.map((d) => d.data());
+          stats.snapshots++;
+          stats.activeJobs = snapshot.docs.length;
+          schedule.replace(snapshot.docs);
           wake();
         },
         (error) => {
@@ -151,38 +202,151 @@ if (process.env.NODE_ENV !== "test") {
           wake();
         },
       );
-  let unsubscribe = listen();
+    // A live switch eliminates runtime polling while email is disabled. Claims
+    // still recheck it transactionally; a stale listener cannot permit delivery.
+    const runtime = db.doc("applicationSettings/runtime").onSnapshot(
+      (snapshot) => {
+        switches.enabled = snapshot.data()?.emailEnabled !== false;
+        switches.revision++;
+        wake();
+      },
+      (error) => {
+        listenerError = error;
+        wake();
+      },
+    );
+    return () => {
+      queue();
+      runtime();
+    };
+  };
+  try {
+    while (!stopping && !signal?.aborted) {
+      if (listenerError) {
+        unsubscribe();
+        switches.enabled = null;
+        restart = true;
+        const error = listenerError;
+        listenerError = null;
+        notBefore =
+          Date.now() +
+          retryDelay(failed++, firebaseOutage(error)?.kind === "quota");
+        stats.failures++;
+        console.error(
+          JSON.stringify({
+            event: "email_worker_backoff",
+            kind: firebaseOutage(error)?.kind ?? "listener",
+            retryAt: new Date(notBefore).toISOString(),
+          }),
+        );
+      }
+      if (Date.now() < notBefore) {
+        await sleep(notBefore - Date.now());
+        continue;
+      }
+      if (Date.now() >= renewAt) {
+        try {
+          if (!(await leader.renew())) throw new Error("WORKER_LEASE_LOST");
+          stats.leadershipRenewals++;
+          renewAt = Date.now() + leaderRenewMs;
+          console.log(
+            JSON.stringify({ event: "email_worker_metrics", ...stats }),
+          );
+        } catch (error) {
+          if ((error as Error).message === "WORKER_LEASE_LOST") throw error;
+          notBefore =
+            Date.now() +
+            retryDelay(failed++, firebaseOutage(error)?.kind === "quota");
+          stats.failures++;
+          console.error(
+            JSON.stringify({
+              event: "email_worker_renewal_backoff",
+              retryAt: new Date(notBefore).toISOString(),
+            }),
+          );
+          continue;
+        }
+      }
+      if (restart) {
+        unsubscribe = listen();
+        restart = false;
+      }
+      const documents =
+        switches.enabled === true ? schedule.due().slice(0, 1) : [];
+      if (!documents.length) {
+        const due = switches.enabled === true ? schedule.delay() : null;
+        await sleep(
+          Math.max(1, Math.min(due ?? Infinity, renewAt - Date.now())),
+        );
+        continue;
+      }
+      try {
+        // Mark revisions before processing so our own snapshot writes cannot
+        // repeatedly dispatch the same queued version.
+        for (const document of documents) schedule.considered(document);
+        stats.candidates += documents.length;
+        const runtimeRevision = switches.revision;
+        const result = await tick(documents, {
+          enabled: true,
+          leader,
+          observed: (d, data) => schedule.observed(d, data),
+        });
+        if (result === "disabled") {
+          for (const document of documents) schedule.retry(document);
+          if (switches.revision === runtimeRevision) switches.enabled = false;
+        } else {
+          stats.sentOrRetried += result;
+          failed = 0;
+        }
+      } catch (error) {
+        for (const document of documents) schedule.retry(document);
+        if ((error as Error).message === "WORKER_LEASE_LOST") throw error;
+        notBefore =
+          Date.now() +
+          retryDelay(failed++, firebaseOutage(error)?.kind === "quota");
+        stats.failures++;
+        console.error(
+          JSON.stringify({
+            event: "email_worker_backoff",
+            kind: firebaseOutage(error)?.kind ?? "delivery",
+            retryAt: new Date(notBefore).toISOString(),
+          }),
+        );
+      }
+    }
+  } finally {
+    signal?.removeEventListener("abort", stop);
+    unsubscribe();
+    await leader.release().catch(() => {});
+  }
+}
+if (process.env.NODE_ENV !== "test") {
+  let failures = 0;
   while (!stopping) {
-    if (listenerError) {
-      const wait = pausedFor(listenerError);
-      console.error(
-        `Email queue unavailable: ${firebaseOutage(listenerError)?.message ?? (listenerError as Error).message}. Retrying in ${wait / 1000}s.`,
-      );
-      listenerError = null;
-      await sleep(wait);
-      if (!stopping) unsubscribe = listen();
-      continue;
-    }
-    const due = nextDue(jobs);
-    // Nothing waiting, or not yet due: sleep until the listener wakes us.
-    if (due === null || due > 0) {
-      await sleep(Math.min(due ?? idle, idle));
-      continue;
-    }
     try {
-      // Email switched off in Control Center: check again later rather
-      // than reading the settings in a tight loop.
-      // Nothing claimable (another worker has them, or they are not due
-      // among the first 50): wait instead of re-reading the queue.
-      const result = await tick();
-      await sleep(result === "disabled" ? 300000 : result ? 1000 : 30000);
+      const result = await runWorker();
+      if (result !== "standby") break;
+      // A crashed leader's lease eventually expires. Stay out of its queue,
+      // but retry election slowly rather than permanently stopping delivery
+      // after a supervisor restart finds the old lease still present.
+      const until = Date.now() + leaderRenewMs;
+      while (!stopping && Date.now() < until) await sleep(until - Date.now());
     } catch (error) {
-      const wait = pausedFor(error);
+      const kind = firebaseOutage(error)?.kind;
+      if (!kind || kind === "credentials") {
+        console.error("Email worker stopped", kind ?? (error as Error).message);
+        process.exitCode = 1;
+        break;
+      }
+      const until = Date.now() + retryDelay(failures++, kind === "quota");
       console.error(
-        `Email queue unavailable: ${firebaseOutage(error)?.message ?? (error as Error).message}. Retrying in ${wait / 1000}s.`,
+        JSON.stringify({
+          event: "email_worker_startup_backoff",
+          kind,
+          retryAt: new Date(until).toISOString(),
+        }),
       );
-      await sleep(wait);
+      while (!stopping && Date.now() < until) await sleep(until - Date.now());
     }
   }
-  unsubscribe();
 }

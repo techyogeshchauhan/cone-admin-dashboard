@@ -170,7 +170,7 @@ describe("Dashboard development login endpoint", () => {
       .set("Origin", "http://localhost:3000")
       .send({ role: "superadmin" });
     expect(result.status).toBe(503);
-    expect(result.body.error).toMatch(/daily quota is used up/);
+    expect(result.body.error).toMatch(/quota or rate exhaustion/);
     expect(result.body.password).toBeUndefined();
   });
   it("says how to create the test accounts when their file is missing", async () => {

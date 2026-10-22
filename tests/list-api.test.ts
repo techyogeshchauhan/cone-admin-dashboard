@@ -168,7 +168,7 @@ describe("paged lists", () => {
     ]);
   });
 
-  it("counts the overview once, until something changes", async () => {
+  it("keeps overview metrics on unrelated mutations and invalidates participant mutations", async () => {
     const first = await get("/api/overview");
     expect(first.body).toMatchObject({ registrations: 42, presenters: 11 });
     const before = readsOf("people");
@@ -176,6 +176,12 @@ describe("paged lists", () => {
     expect(readsOf("people")).toBe(before);
     await api
       .post("/api/records/venues")
+      .set("Authorization", "Bearer token")
+      .send({ data: {} });
+    await get("/api/overview");
+    expect(readsOf("people")).toBe(before);
+    await api
+      .post("/api/records/participants")
       .set("Authorization", "Bearer token")
       .send({ data: {} });
     await get("/api/overview");

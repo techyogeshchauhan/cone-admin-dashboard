@@ -57,7 +57,13 @@ import {
 } from "./mail.js";
 import { encryptSecret } from "./secrets.js";
 import { readWorkbook } from "./workbook.js";
-import { clearRequestCaches, memo } from "./request-cache.js";
+import {
+  clearRequestCaches,
+  memo,
+  requestCacheStatistics,
+} from "./request-cache.js";
+import { mutationCaches } from "./cache-policy.js";
+import { registrationCounts } from "./overview-counts.js";
 import { firebaseOutage } from "./firebase-errors.js";
 import { readLog, recordAudit } from "./activity-log.js";
 import { pageSize, readPage } from "./pagination.js";
@@ -215,7 +221,9 @@ const publicFields = [
   "highlights",
   "logos",
 ] as const;
-const publicConferences = memo<Record<string, unknown>>();
+const publicConferences = memo<Record<string, unknown>>({
+  tags: ["conference"],
+});
 app.get("/api/public/conference", async (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.json(
@@ -251,12 +259,15 @@ registerTestAccountLogin(app);
 registerTestingVerification(app);
 registerDevRoleLogin(app);
 registerMobileSelfie(app, storage);
-// Any write may change access, roles or runtime switches: forget cached ones.
+// Evict only dependencies of this mutation, including partial failures.
 app.use("/api", (req, res, next) => {
-  if (req.method !== "GET") res.on("finish", clearRequestCaches);
+  if (!["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    const tags = mutationCaches(req.path);
+    res.on("finish", () => clearRequestCaches(tags));
+  }
   next();
 });
-const sessions = memo<Actor & { expiresAt: number }>();
+const sessions = memo<Actor & { expiresAt: number }>({ tags: ["sessions"] });
 async function resolveSession(token: string) {
   const decoded = await auth.verifyIdToken(token, true);
   if (decoded.login_audience === "mobile")
@@ -329,7 +340,7 @@ app.get("/api/me", (req, res) => res.json(actorOf(req)));
 const switches = memo<{
   maintenanceMode: boolean;
   runtime: Awaited<ReturnType<typeof runtimeConfiguration>>;
-}>();
+}>({ tags: ["switches"] });
 app.use("/api", async (req, res, next) => {
   try {
     const { maintenanceMode, runtime } = await switches("gate", async () => {
@@ -541,16 +552,19 @@ app.get("/api/fees/workbook", async (req, res) => {
     ),
   });
 });
-// Counting registrations reads every participant, so the result is kept for
-// a short while; any change made through the API clears it.
-const overviews = memo<Record<string, unknown>>();
+// Permission-scoped metrics; local activity is loaded separately so an unrelated
+// audited write does not invalidate expensive database metrics.
+const overviews = memo<Record<string, unknown>>({ tags: ["overview"] });
 async function overview(access: ReturnType<typeof overviewAccess>) {
-  const [people, redemptions, imports, activity, fees] = await Promise.all([
+  const [people, redemptions, imports, fees] = await Promise.all([
     access.people
-      ? db
-          .collection("people")
-          .select("isDemo", "archivedAt", "registrationStatus", "role")
-          .get()
+      ? db.runTransaction(
+          (tx) =>
+            registrationCounts(db.collection("people"), (query) =>
+              tx.get(query),
+            ),
+          { readOnly: true },
+        )
       : null,
     access.meals ? db.collection("mealRedemptions").count().get() : null,
     access.imports
@@ -561,7 +575,6 @@ async function overview(access: ReturnType<typeof overviewAccess>) {
           .limit(5)
           .get()
       : null,
-    access.audit ? readLog("audit", { limit: 8 }) : null,
     access.fees
       ? db
           .collection("feeRecords")
@@ -569,31 +582,11 @@ async function overview(access: ReturnType<typeof overviewAccess>) {
           .get()
       : null,
   ]);
-  const rows = (people?.docs || [])
-    .map((d) => d.data())
-    .filter((d) => !d.isDemo && !d.archivedAt);
   const feeRows = (fees?.docs || [])
     .map((d) => d.data())
     .filter((d) => !d.archivedAt);
   return {
-    ...(access.people
-      ? {
-          registrations: rows.length,
-          confirmed: rows.filter((p) => p.registrationStatus === "confirmed")
-            .length,
-          presenters: rows.filter((p) => p.role === "presenter").length,
-          byRole: Object.fromEntries(
-            [
-              "presenter",
-              "attendee",
-              "speaker",
-              "vip",
-              "organiser",
-              "volunteer",
-            ].map((role) => [role, rows.filter((p) => p.role === role).length]),
-          ),
-        }
-      : {}),
+    ...(access.people ? people : {}),
     ...(access.meals ? { mealsServed: redemptions?.data().count ?? 0 } : {}),
     ...(access.fees
       ? {
@@ -611,24 +604,29 @@ async function overview(access: ReturnType<typeof overviewAccess>) {
           })),
         }
       : {}),
-    ...(access.audit
-      ? {
-          recentActivity:
-            activity?.rows.map((entry) => ({
-              id: entry.id,
-              action: entry.action,
-              actorName: entry.actorName || "System",
-              target: entry.target || "Application",
-              createdAt: entry.createdAt,
-            })) || [],
-        }
-      : {}),
   };
 }
 app.get("/api/overview", async (req, res) => {
   requirePermission(req, "reports");
   const access = overviewAccess(actorOf(req));
-  res.json(await overviews(JSON.stringify(access), () => overview(access)));
+  const metrics = await overviews(JSON.stringify(access), () =>
+    overview(access),
+  );
+  const activity = access.audit ? await readLog("audit", { limit: 8 }) : null;
+  res.json({
+    ...metrics,
+    ...(activity
+      ? {
+          recentActivity: activity.rows.map((entry) => ({
+            id: entry.id,
+            action: entry.action,
+            actorName: entry.actorName || "System",
+            target: entry.target || "Application",
+            createdAt: entry.createdAt,
+          })),
+        }
+      : {}),
+  });
 });
 app.get("/api/conference", async (req, res) => {
   requirePermission(req, "conference");
@@ -1724,6 +1722,7 @@ app.post("/api/imports/workbook/:id/commit", async (req, res) => {
           : { status: "completed", ...finished, completedAt: now() },
       ),
     ).catch((error) => console.error(`Import ${id} status update`, error));
+    clearRequestCaches(["overview", "sessions"]);
     if (!rowErrors)
       await audit(actor, "import.commit", id).catch(() => undefined);
   }
@@ -2467,6 +2466,7 @@ app.get("/api/system-health", async (req, res) => {
       ? "configured; delivery not checked"
       : "not configured",
     checkedAt: new Date().toISOString(),
+    cache: requestCacheStatistics(),
   });
 });
 app.use(express.static(path.resolve("dist")));
@@ -2504,6 +2504,7 @@ app.use(
     const outage = firebaseOutage(error);
     if (outage) {
       console.error(`Firebase ${outage.kind} failure:`, err.message);
+      res.setHeader("Retry-After", outage.kind === "quota" ? "60" : "5");
       res.status(503).json({ error: outage.message });
       return;
     }

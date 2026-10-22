@@ -1,17 +1,20 @@
-// Short-lived memory for lookups every dashboard request repeats (token
-// verification, the caller's profile and role, runtime switches). Each one is
-// a network round trip to Firebase, so a page that makes several requests at
-// once would otherwise repeat them all. Concurrent callers share one pending
-// lookup, failures are never kept, and any write through the API clears
-// everything so access changes made in the dashboard apply immediately.
+// Share concurrent lookups and briefly cache successful responses. Mutation
+// dependencies evict only affected namespaces; transient Firebase failures have
+// bounded backoff while authentication/authorization refusals are never kept.
+import { firebaseOutage } from "./firebase-errors.js";
 const ttl = Number(process.env.API_CACHE_MS ?? 30000);
-const caches = new Set<
-  Map<string, { until: number; value: Promise<unknown> }>
+const caches = new Map<
+  Map<string, { until: number; value: Promise<unknown> }>,
+  string[]
 >();
+const statistics = { hits: 0, misses: 0, failures: 0, invalidations: 0 };
+export const requestCacheStatistics = () => ({ ...statistics });
 
-export function memo<T>(options: { max?: number } = {}) {
+export function memo<T>(
+  options: { max?: number; tags?: string[]; ttl?: number } = {},
+) {
   const entries = new Map<string, { until: number; value: Promise<unknown> }>();
-  caches.add(entries);
+  caches.set(entries, options.tags ?? []);
   return (
     key: string,
     load: () => Promise<T>,
@@ -20,17 +23,27 @@ export function memo<T>(options: { max?: number } = {}) {
   ): Promise<T> => {
     const now = Date.now();
     const hit = entries.get(key);
-    if (hit && hit.until > now) return hit.value as Promise<T>;
-    const value = load();
-    if (ttl <= 0) return value;
-    const entry = { until: now + ttl, value };
+    if (hit && hit.until > now) {
+      statistics.hits++;
+      return hit.value as Promise<T>;
+    }
+    statistics.misses++;
+    const value = Promise.resolve().then(load);
+    const duration = options.ttl ?? ttl;
+    if (duration <= 0) return value;
+    const entry = { until: now + duration, value };
     entries.set(key, entry);
     value.then(
       (result) => {
         entry.until = Math.min(entry.until, expiresAt(result));
       },
-      () => {
-        if (entries.get(key) === entry) entries.delete(key);
+      (error) => {
+        statistics.failures++;
+        // Share transient Firebase failures too; never cache auth/permission refusals.
+        const kind = firebaseOutage(error)?.kind;
+        if (kind === "quota" || kind === "network")
+          entry.until = Date.now() + (kind === "quota" ? 60000 : 5000);
+        else if (entries.get(key) === entry) entries.delete(key);
       },
     );
     if (entries.size > (options.max ?? 1000))
@@ -41,6 +54,10 @@ export function memo<T>(options: { max?: number } = {}) {
   };
 }
 
-export function clearRequestCaches() {
-  for (const entries of caches) entries.clear();
+export function clearRequestCaches(tags?: string[]) {
+  for (const [entries, dependencies] of caches)
+    if (!tags || dependencies.some((tag) => tags.includes(tag))) {
+      entries.clear();
+      statistics.invalidations++;
+    }
 }

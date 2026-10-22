@@ -40,6 +40,30 @@ describe("application branding API permissions", () => {
     fixture("superadmin");
   });
   afterEach(() => vi.unstubAllEnvs());
+  it("preserves the transactional branding audit when saving settings", async () => {
+    const create = vi.fn();
+    m.collection.mockReturnValue({
+      doc: () => ({ path: "auditLogs/branding" }),
+    });
+    m.runTransaction.mockImplementation((work) =>
+      work({
+        get: (ref: any) => ref.get(),
+        set: vi.fn(),
+        create,
+      }),
+    );
+    const response = await supertest(app)
+      .post("/api/settings/branding")
+      .set("Authorization", "Bearer token")
+      .field("applicationName", "New name")
+      .field("version", "3");
+    expect(response.status).toBe(200);
+    expect(create).toHaveBeenCalledWith(
+      { path: "auditLogs/branding" },
+      expect.objectContaining({ action: "branding.update", actorUid: "actor" }),
+    );
+    expect(create).toHaveBeenCalledOnce();
+  });
   it("publishes only safe branding before login", async () => {
     const response = await supertest(app).get("/api/branding");
     expect(response.status).toBe(200);

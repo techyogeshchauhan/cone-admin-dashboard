@@ -62,7 +62,7 @@ describe("API authorization before administrative writes", () => {
       .get("/api/me")
       .set("Authorization", "Bearer token");
     expect(response.status).toBe(503);
-    expect(response.body.error).toMatch(/daily quota is used up/);
+    expect(response.body.error).toMatch(/quota or rate exhaustion/);
   });
   it("permits a basic liveness check without Firebase credentials", async () => {
     expect((await api.get("/api/health")).status).toBe(200);
