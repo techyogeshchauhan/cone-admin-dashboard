@@ -39,8 +39,10 @@ export async function publicSmtpConfiguration() {
     configured: Boolean(config.host),
   };
 }
-export async function mailTransport() {
-  const config = await smtpConfiguration();
+export async function mailTransport(
+  configuration?: Awaited<ReturnType<typeof smtpConfiguration>>,
+) {
+  const config = configuration ?? (await smtpConfiguration());
   if (!config.host)
     throw Object.assign(new Error("Configure SMTP first"), { status: 400 });
   const mode = config.security;
@@ -67,7 +69,9 @@ export async function mailTransport() {
       : {}),
   });
 }
-export async function sender() {
-  const config = await smtpConfiguration();
+export async function sender(
+  configuration?: Awaited<ReturnType<typeof smtpConfiguration>>,
+) {
+  const config = configuration ?? (await smtpConfiguration());
   return { name: config.fromName, address: config.fromEmail };
 }

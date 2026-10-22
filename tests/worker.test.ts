@@ -8,6 +8,7 @@ const m = vi.hoisted(() => ({
   sendMail: vi.fn(),
   mailTransport: vi.fn(),
   sender: vi.fn(),
+  smtpConfiguration: vi.fn(),
 }));
 vi.mock("../server/firebase.js", () => ({ db: m }));
 vi.mock("../server/control.js", () => ({
@@ -16,15 +17,18 @@ vi.mock("../server/control.js", () => ({
 vi.mock("../server/mail.js", () => ({
   mailTransport: m.mailTransport,
   sender: m.sender,
+  smtpConfiguration: m.smtpConfiguration,
 }));
 import { nextDue, tick } from "../server/worker.js";
 describe("SMTP email worker", () => {
+  let documents: any[];
   let update: ReturnType<typeof vi.fn>;
   beforeEach(() => {
     vi.clearAllMocks();
     update = vi.fn().mockResolvedValue(undefined);
     m.runtimeConfiguration.mockResolvedValue({ emailEnabled: true });
     const ref = { update };
+    documents = [{ id: "job1", ref, data: () => job }];
     const job = {
       status: "queued",
       attempts: 0,
@@ -44,18 +48,15 @@ describe("SMTP email worker", () => {
       update: vi.fn(),
     };
     m.runTransaction.mockImplementation((fn) => fn(tx));
-    m.collection.mockReturnValue({
-      where: () => ({
-        limit: () => ({ get: async () => ({ docs: [{ id: "job1", ref }] }) }),
-      }),
-    });
+
+    m.smtpConfiguration.mockResolvedValue({ host: "local-fixture" });
     m.mailTransport.mockResolvedValue({ sendMail: m.sendMail });
     m.sender.mockResolvedValue({ name: "CONE", address: "sender@example.org" });
     m.sendMail.mockResolvedValue({});
   });
   afterEach(() => vi.clearAllMocks());
   it("delivers queued messages and records success", async () => {
-    await tick();
+    await tick(documents);
     expect(m.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
         to: "recipient@example.org",
@@ -64,6 +65,8 @@ describe("SMTP email worker", () => {
         html: expect.stringContaining("Hello Alice"),
       }),
     );
+    expect(m.collection).not.toHaveBeenCalled();
+    expect(m.smtpConfiguration).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "sent",
@@ -80,7 +83,7 @@ describe("SMTP email worker", () => {
     });
     const deliver = vi.fn((options) => transport.sendMail(options));
     m.mailTransport.mockResolvedValue({ sendMail: deliver });
-    await tick();
+    await tick(documents);
     expect(deliver).toHaveBeenCalledOnce();
     const message = (await deliver.mock.results[0].value).message.toString();
     expect(message).toMatch(/Content-Type: multipart\/alternative;/);
@@ -91,15 +94,56 @@ describe("SMTP email worker", () => {
   });
   it("pauses delivery when disabled", async () => {
     m.runtimeConfiguration.mockResolvedValue({ emailEnabled: false });
-    await tick();
+    await tick(documents, { enabled: false });
     expect(m.sendMail).not.toHaveBeenCalled();
+  });
+  it("does not attempt claims for future retries or live leases", async () => {
+    documents[0].data = () => ({
+      status: "retry",
+      nextAttemptAt: new Date(Date.now() + 60000).toISOString(),
+    });
+    expect(await tick(documents)).toBe(0);
+    expect(m.runTransaction).not.toHaveBeenCalled();
+  });
+  it("rechecks the email switch inside the transaction", async () => {
+    m.runTransaction.mockImplementation((fn) =>
+      fn({
+        get: async (ref: any) => ({
+          data: () =>
+            ref === documents[0].ref
+              ? documents[0].data()
+              : { emailEnabled: false },
+        }),
+        update: vi.fn(),
+      }),
+    );
+    expect(await tick(documents)).toBe("disabled");
+    expect(m.sendMail).not.toHaveBeenCalled();
+  });
+  it("ignores a stale snapshot after a different worker already sent the job", async () => {
+    m.runTransaction.mockImplementation((fn) =>
+      fn({ get: async () => ({ data: () => ({ status: "sent" }) }) }),
+    );
+    const observed = vi.fn();
+    await tick(documents, { observed });
+    expect(m.sendMail).not.toHaveBeenCalled();
+    expect(observed).toHaveBeenCalled();
+  });
+  it("does not requeue successful SMTP delivery when its Firestore status write fails", async () => {
+    update.mockRejectedValueOnce({ code: 8 });
+    await expect(tick(documents)).rejects.toMatchObject({ code: 8 });
+    expect(m.sendMail).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "sent" }),
+    );
   });
   it("records a retry without storing SMTP secrets or full errors", async () => {
     m.sendMail.mockRejectedValue({
       code: "EAUTH",
       message: "sensitive transport details",
     });
-    await tick();
+    await tick(documents);
     expect(update).toHaveBeenCalledWith(
       expect.objectContaining({ status: "retry", error: "EAUTH" }),
     );

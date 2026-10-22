@@ -94,7 +94,7 @@ describe("dashboard session lookups", () => {
     await me();
     expect(m.verify).toHaveBeenCalledTimes(1);
   });
-  it("checks again after any write, so a disabled account is refused at once", async () => {
+  it("keeps sessions on unrelated writes and refuses a disabled account after an access mutation", async () => {
     expect((await me()).status).toBe(200);
     m.profiles["adminUsers/user-a"] = {
       ...(m.profiles["adminUsers/user-a"] as object),
@@ -105,6 +105,11 @@ describe("dashboard session lookups", () => {
       .post("/api/records/participants")
       .set("Authorization", "Bearer token-a")
       .send({ data: {} });
+    expect((await me()).status).toBe(200);
+    await api
+      .post("/api/control/users/user-a/action")
+      .set("Authorization", "Bearer token-a")
+      .send({});
     expect((await me()).status).toBe(403);
     expect(m.verify).toHaveBeenCalledTimes(2);
   });

@@ -1,0 +1,268 @@
+{
+  "checkedAt": "2026-10-22T12:32:06.403Z",
+  "project": "conferencemanagement-239a3",
+  "database": "(default)",
+  "operations": [
+    {
+      "operation": "listDatabaseIndexes",
+      "status": 200,
+      "complete": true
+    },
+    {
+      "operation": "readMonitoringTimeSeries",
+      "message": "Permission denied (or the resource may not exist).",
+      "status": 403,
+      "reason": "PERMISSION_DENIED",
+      "details": []
+    }
+  ],
+  "metadataOnly": true,
+  "completeDatabaseCompositeIndexInventory": true,
+  "productionIndexCount": 9,
+  "productionPeopleCompositeIndexCount": 0,
+  "productionIndexes": [
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/correctionRequests/indexes/CICAgJim14AJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/auditLogs/indexes/CICAgJjF9oIJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "action",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/sessions/indexes/CICAgJiUsZIJ",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "published",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "startsAt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/claimRequests/indexes/CICAgJim14AK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/passes/indexes/CICAgOjXh4EK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "ownerUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/userRoles/indexes/CICAgJj7z4EK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "roles",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "active",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/scanEvents/indexes/CICAgJjF9oIK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "staffUid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "at",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/claimRequests/indexes/CICAgJiUpoMK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "uid",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "ASCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    },
+    {
+      "name": "projects/conferencemanagement-239a3/databases/(default)/collectionGroups/announcements/indexes/CICAgJiUsZIK",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "published",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "audience",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "publishedAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ],
+      "state": "READY",
+      "density": "SPARSE_ALL"
+    }
+  ],
+  "proposedIndexFile": "firebase/firestore.indexes.json",
+  "proposedIndexFileSha256": "83c5f80add62f7d8421c84d24bc269c8b24b7cb37b01d78d24d1297b5f70c67f",
+  "comparison": [
+    {
+      "number": 1,
+      "fields": "isDemo:ASCENDING, archivedAt:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 2,
+      "fields": "role:ASCENDING, archivedAt:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 3,
+      "fields": "registrationStatus:ASCENDING, archivedAt:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 4,
+      "fields": "role:ASCENDING, isDemo:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 5,
+      "fields": "registrationStatus:ASCENDING, isDemo:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 6,
+      "fields": "role:ASCENDING, isDemo:ASCENDING, archivedAt:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    },
+    {
+      "number": 7,
+      "fields": "registrationStatus:ASCENDING, isDemo:ASCENDING, archivedAt:ASCENDING",
+      "queryScope": "COLLECTION",
+      "matches": [],
+      "verdict": "NO_EXACT_MATCH"
+    }
+  ],
+  "limitations": [
+    "Metadata comparison only; no production query execution.",
+    "Exact absence does not prove a query cannot use index merging.",
+    "Single-field exemptions were not inventoried.",
+    "Monitoring time series access was denied; no usage reduction measured."
+  ]
+}

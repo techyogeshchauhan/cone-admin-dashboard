@@ -13,7 +13,7 @@
   },
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"tsx watch server/index.ts\" \"tsx watch server/worker.ts\" \"vite --host 127.0.0.1\"",
+    "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite --host 127.0.0.1\"",
     "build": "tsc --noEmit && vite build && tsc -p tsconfig.server.json",
     "start": "node dist-server/server/index.js",
     "test": "vitest run",
@@ -27,7 +27,9 @@
     "format": "prettier --write src server shared tests browser-tests *.ts *.json",
     "test:otp-emulators": "firebase emulators:exec --only firestore,auth --project demo-cone-otp --config firebase.otp-test.json \"node --import tsx tests/otp-integration.ts\"",
     "provision:people": "tsx server/provision-people.ts",
-    "backfill:search-keys": "tsx server/backfill-search-keys.ts"
+    "backfill:search-keys": "tsx server/backfill-search-keys.ts",
+    "dev:with-worker": "concurrently -k \"npm run dev\" \"npm run worker\"",
+    "test:quota-emulator": "firebase emulators:exec --only firestore --project demo-cone-quota --config firebase.quota-test.json \"node --import tsx tests/quota-integration.ts\""
   },
   "dependencies": {
     "cors": "^2.8.5",
@@ -35,7 +37,7 @@
     "exceljs": "^4.4.0",
     "express": "^5.0.0",
     "express-rate-limit": "^8.0.0",
-    "firebase": "^12.10.0",
+    "firebase": "^12.19.0",
     "firebase-admin": "^13.10.0",
     "helmet": "^8.0.0",
     "lucide-react": "^0.468.0",

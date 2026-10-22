@@ -7,6 +7,7 @@ const m = vi.hoisted(() => ({
   revokeRefreshTokens: vi.fn(),
   deleteUser: vi.fn(),
   assertControlAuthority: vi.fn(),
+  createAudit: vi.fn(),
 }));
 vi.mock("../server/firebase.js", () => ({ auth: m, db: m }));
 vi.mock("../server/control.js", () => ({
@@ -56,7 +57,7 @@ describe("user account deletion", () => {
           if (ref.path === "adminUsers/target")
             profile = { ...profile, ...data };
         },
-        create: vi.fn(),
+        create: m.createAudit,
       }),
     );
     m.updateUser.mockResolvedValue({});
@@ -79,6 +80,15 @@ describe("user account deletion", () => {
       deletedBy: "owner",
     });
     expect(profile.archivedAt).toBeTruthy();
+    expect(m.createAudit).toHaveBeenCalledWith(
+      { path: "auditLogs/new" },
+      expect.objectContaining({
+        action: "user.delete",
+        actorUid: "owner",
+        target: "target",
+      }),
+    );
+    expect(m.createAudit).toHaveBeenCalledOnce();
     expect(m.doc.mock.calls.some(([path]) => path.startsWith("people/"))).toBe(
       false,
     );

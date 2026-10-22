@@ -45,7 +45,9 @@ export async function publicBranding() {
 }
 export function registerPublicBranding(app: Express, storage: string) {
   // Every open dashboard and the mobile app poll this public endpoint.
-  const cached = memo<Awaited<ReturnType<typeof publicBranding>>>();
+  const cached = memo<Awaited<ReturnType<typeof publicBranding>>>({
+    tags: ["branding"],
+  });
   app.get("/api/branding", async (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Access-Control-Allow-Origin", "*");

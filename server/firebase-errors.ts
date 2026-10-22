@@ -11,7 +11,7 @@ export function firebaseOutage(error: unknown) {
     return {
       kind: "quota" as const,
       message:
-        "The Firebase daily quota is used up (Firestore free plan), so data cannot be read or saved. It resets at midnight Pacific time (about 12:30 pm India time); upgrade the project to the Blaze plan to avoid this.",
+        "Firebase reports quota or rate exhaustion. Data is temporarily unavailable. Check Firestore usage and service quota metrics to identify the exhausted limit; retry after the backoff period.",
     };
   if (networkCodes.includes(code as never))
     return {
