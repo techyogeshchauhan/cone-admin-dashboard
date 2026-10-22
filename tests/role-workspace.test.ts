@@ -61,4 +61,15 @@ describe("Role-specific workspace presentation", () => {
       [],
     );
   });
+  it("hides write-only features and raw imports without fee access", () => {
+    expect(
+      permittedShortcuts(
+        {
+          ...actor,
+          permissions: ["sessions:write", "imports:read", "participants:read"],
+        },
+        links,
+      ).map((l) => l.key),
+    ).toEqual(["participants"]);
+  });
 });

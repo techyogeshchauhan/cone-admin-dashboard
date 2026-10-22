@@ -7,6 +7,7 @@ import { request } from "./firebase";
 export function usePagedList<T extends { id: string }>(
   path: string,
   params: Record<string, string | undefined> = {},
+  mode: "append" | "pages" = "append",
 ) {
   const query = new URLSearchParams(
     Object.entries(params).filter((entry): entry is [string, string] =>
@@ -17,11 +18,13 @@ export function usePagedList<T extends { id: string }>(
     [next, setNext] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [loaded, setLoaded] = useState(false),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [pageIndex, setPageIndex] = useState(0),
+    [cursors, setCursors] = useState<(string | undefined)[]>([undefined]);
   const generation = useRef(0);
   const load = useCallback(
-    async (after?: string) => {
-      const current = after ? generation.current : ++generation.current;
+    async (after?: string, targetPage = 0) => {
+      const current = ++generation.current;
       setLoading(true);
       setError("");
       try {
@@ -33,8 +36,14 @@ export function usePagedList<T extends { id: string }>(
         if (current !== generation.current) return;
         // An API from before pagination answers with a plain array.
         const received = Array.isArray(page) ? page : page.rows || [];
-        setRows((old) => (after ? [...old, ...received] : received));
+        setRows((old) =>
+          after && mode === "append" ? [...old, ...received] : received,
+        );
         setNext(Array.isArray(page) ? null : page.next || null);
+        if (mode === "pages") {
+          setPageIndex(targetPage);
+          setCursors((old) => [...old.slice(0, targetPage), after]);
+        }
         setLoaded(true);
       } catch (e) {
         if (current === generation.current) setError((e as Error).message);
@@ -42,17 +51,22 @@ export function usePagedList<T extends { id: string }>(
         if (current === generation.current) setLoading(false);
       }
     },
-    [path, query],
+    [path, query, mode],
   );
   useEffect(() => {
     setRows([]);
     setNext(null);
     setLoaded(false);
+    setPageIndex(0);
+    setCursors([undefined]);
     void load();
+    return () => {
+      ++generation.current;
+    };
   }, [load]);
   const loadMore = useCallback(() => {
-    if (next && !loading) void load(next);
-  }, [next, loading, load]);
+    if (next && !loading) void load(next, pageIndex + 1);
+  }, [next, loading, load, pageIndex]);
   return {
     rows,
     setRows,
@@ -61,7 +75,13 @@ export function usePagedList<T extends { id: string }>(
     loaded,
     error,
     loadMore,
-    reload: () => load(),
+    previousPage: () => {
+      if (pageIndex > 0 && !loading)
+        void load(cursors[pageIndex - 1], pageIndex - 1);
+    },
+    pageNumber: pageIndex + 1,
+    reload: () =>
+      mode === "pages" ? load(cursors[pageIndex], pageIndex) : load(),
   };
 }
 

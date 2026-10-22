@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { request } from "./firebase";
 import type { Actor } from "../shared/schema";
+import { LoadMore, usePagedList } from "./paging";
 type Schedule = {
   title: string;
   day: string;
@@ -20,6 +21,7 @@ type Schedule = {
   venue?: string;
 };
 type Profile = {
+  [key: string]: unknown;
   fullName?: string;
   email?: string;
   mobile?: string;
@@ -27,6 +29,8 @@ type Profile = {
   registrationId?: string;
   registrationStatus?: string;
   role?: string;
+  registrationFee?: number;
+  feesReceived?: string;
   coupons?: { couponId: string; meal: string; day: string; window: string }[];
 };
 export default function ParticipantWorkspace({ actor }: { actor: Actor }) {
@@ -115,6 +119,78 @@ export default function ParticipantWorkspace({ actor }: { actor: Actor }) {
         </div>
       )}
       <div className="overview-grid">
+        {data?.profile && (
+          <section className="panel" aria-label="Your workbook registration">
+            <div className="panel-heading">
+              <div>
+                <h2>Your registration details</h2>
+                <p>Read-only information from your registration</p>
+              </div>
+            </div>
+            <dl className="record-details">
+              {[
+                ["discipline", "Discipline"],
+                ["workingAs", "Working as"],
+                ["district", "District"],
+                ["gender", "Gender"],
+                ["dob", "Date of birth"],
+                ["rollNo", "Roll number"],
+                ["softCopy", "Soft copy"],
+                ["accommodation", "Accommodation"],
+                ["travelAssistance", "TA required"],
+                ["earlierAwardee", "Earlier awardee"],
+                ...(profile.role === "presenter"
+                  ? [
+                      ["category", "Category"],
+                      ["presentationType", "Presentation type (O/P)"],
+                      ["abstractTitle", "Abstract title"],
+                    ]
+                  : []),
+              ]
+                .filter(
+                  ([key]) =>
+                    profile[key] !== null &&
+                    profile[key] !== undefined &&
+                    profile[key] !== "",
+                )
+                .map(([key, title]) => (
+                  <div key={key}>
+                    <dt>{title}</dt>
+                    <dd>{String(profile[key])}</dd>
+                  </div>
+                ))}
+            </dl>
+          </section>
+        )}
+        {data?.profile && (
+          <section className="panel" aria-label="Your fee records">
+            <div className="panel-heading">
+              <div>
+                <h2>Your Fee Records</h2>
+                <p>Your own registration and payment information</p>
+              </div>
+            </div>
+            <dl className="record-details">
+              <div>
+                <dt>Registration fee (INR)</dt>
+                <dd>
+                  {profile.registrationFee == null
+                    ? "Not recorded"
+                    : profile.registrationFee.toLocaleString("en-IN")}
+                </dd>
+              </div>
+              <div>
+                <dt>Workbook payment / DD reference</dt>
+                <dd>{profile.feesReceived || "Not recorded"}</dd>
+              </div>
+            </dl>
+            <p className="inline-note">
+              A workbook reference does not confirm payment receipt. Contact
+              registration staff to request a correction.
+            </p>
+            <OwnFeeRecords />
+          </section>
+        )}
         <section className="panel">
           <div className="panel-heading">
             <div>
@@ -186,6 +262,56 @@ export default function ParticipantWorkspace({ actor }: { actor: Actor }) {
           )}
         </section>
       </div>
+    </>
+  );
+}
+
+function OwnFeeRecords() {
+  const list = usePagedList<{
+    id: string;
+    amount: number;
+    currency: string;
+    status: string;
+    reference: string;
+  }>("/profile/fees");
+  return (
+    <>
+      {list.error && (
+        <p className="message" role="alert">
+          {list.error}
+        </p>
+      )}
+      {list.loading && !list.rows.length ? (
+        <p className="loading">Loading your fee records…</p>
+      ) : list.rows.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Amount (INR)</th>
+                <th>Status</th>
+                <th>Payment reference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.rows.map((row) => (
+                <tr key={row.id}>
+                  <td>{Number(row.amount).toLocaleString("en-IN")}</td>
+                  <td>{row.status}</td>
+                  <td>{row.reference || "Not recorded"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        !list.error && <p>No managed fee records have been recorded for you.</p>
+      )}
+      <LoadMore
+        next={list.next}
+        loading={list.loading}
+        onLoad={list.loadMore}
+      />
     </>
   );
 }

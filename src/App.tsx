@@ -54,6 +54,11 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { auth, configured, request } from "./firebase";
+import { createPortal } from "react-dom";
+import "./record-details.css";
+import { canOpenWorkspace, financialFields } from "../shared/role-fields";
+import WorkbookFees from "./WorkbookFees";
+const DepartmentRecords = lazy(() => import("./DepartmentRecords"));
 const EmailCenter = lazy(() => import("./EmailCenter"));
 import PassCenter from "./PassCenter";
 import ConferenceEditor from "./ConferenceEditor";
@@ -179,6 +184,13 @@ const fields: Record<Module, Field[]> = {
     { key: "accommodation", label: "Accommodation", options: ["No", "Yes"] },
     { key: "softCopy", label: "Soft copy", options: ["No", "Yes"] },
     { key: "earlierAwardee", label: "Earlier awardee", options: ["No", "Yes"] },
+    { key: "workingAs", label: "Working as" },
+    { key: "gender", label: "Gender (M/F)" },
+    { key: "dob", label: "Date of birth (as recorded)" },
+    { key: "district", label: "District" },
+    { key: "rollNo", label: "Roll number" },
+    { key: "travelAssistance", label: "TA required" },
+    { key: "remark", label: "Registration remarks", type: "textarea" },
   ],
   users: [
     ...identityFields,
@@ -254,6 +266,12 @@ const navigation = [
     label: "Participants",
     key: "participants",
     icon: Users,
+    permission: "participants",
+  },
+  {
+    label: "Department records",
+    key: "departmentRecords",
+    icon: Layers,
     permission: "participants",
   },
   {
@@ -567,9 +585,10 @@ export default function App() {
   useEffect(() => {
     if (!actor) return;
     const entry = navigation.find((n) => n.key === page);
-    if (entry && !can(actor, entry.permission))
+    if (entry && !canOpenWorkspace(actor, entry.permission))
       landOn(
-        navigation.find((n) => can(actor, n.permission))?.key || "profile",
+        navigation.find((n) => canOpenWorkspace(actor, n.permission))?.key ||
+          "profile",
       );
   }, [actor, page]);
   useEffect(() => {
@@ -593,7 +612,8 @@ export default function App() {
           if (landedUid.current !== user.uid) {
             landedUid.current = user.uid;
             enterWorkspace(
-              navigation.find((n) => can(me, n.permission))?.key || "profile",
+              navigation.find((n) => canOpenWorkspace(me, n.permission))?.key ||
+                "profile",
             );
           }
         } else {
@@ -628,7 +648,9 @@ export default function App() {
     return <Login error={error} retry={() => setRevision((r) => r + 1)} />;
   const current = navigation.find((n) => n.key === page);
   const design = roleDesign(actor.role);
-  const allowedNavigation = navigation.filter((n) => can(actor, n.permission));
+  const allowedNavigation = navigation.filter((n) =>
+    canOpenWorkspace(actor, n.permission),
+  );
   const homePage = allowedNavigation[0]?.key || "profile";
   const groups = sectionGroups
     .map((group) => ({
@@ -841,7 +863,12 @@ export default function App() {
             )}
             <div className="module-area">
               <Suspense fallback={<Loading />}>
-                {page === "control" ? (
+                {!current || !canOpenWorkspace(actor, current.permission) ? (
+                  <Empty
+                    title="No accessible sections"
+                    description="Your administrator can assign access to the sections needed for your role."
+                  />
+                ) : page === "control" ? (
                   <Suspense fallback={<Loading />}>
                     <ControlCenter navigate={go} />
                   </Suspense>
@@ -854,6 +881,8 @@ export default function App() {
                       go("participants");
                     }}
                   />
+                ) : page === "departmentRecords" ? (
+                  <DepartmentRecords actor={actor} />
                 ) : page in fields ? (
                   <Records
                     module={page as Module}
@@ -1168,8 +1197,28 @@ function Overview({
       target: can(actor, "redemptions", "read") ? "redemptions" : "meals",
       filter: {},
     },
-  ];
-  const roles = data.byRole as Record<string, number>;
+    {
+      label: "Fee records",
+      value: data.feeRecords,
+      icon: BookOpen,
+      color: "blue",
+      note: "Managed payment records",
+      target: "fees",
+      filter: {},
+    },
+    {
+      label: "Recorded received (INR)",
+      value: data.feesReceivedAmount,
+      icon: BookOpen,
+      color: "green",
+      note: "Received records only",
+      target: "fees",
+      filter: {},
+    },
+  ].filter(
+    (metric) => metric.value !== undefined && can(actor, metric.target, "read"),
+  );
+  const roles = (data.byRole || {}) as Record<string, number>;
   const max = Math.max(1, ...Object.values(roles));
   return (
     <>
@@ -1202,33 +1251,35 @@ function Overview({
         ))}
       </div>
       <div className="overview-grid">
-        <section className="panel">
-          <div className="panel-heading">
-            <div>
-              <h2>People at the centre</h2>
-              <p>Registration breakdown by conference role</p>
+        {can(actor, "participants", "read") && (
+          <section className="panel">
+            <div className="panel-heading">
+              <div>
+                <h2>People at the centre</h2>
+                <p>Registration breakdown by conference role</p>
+              </div>
+              <Users size={20} />
             </div>
-            <Users size={20} />
-          </div>
-          <div className="bars">
-            {Object.entries(roles).map(([role, count]) => (
-              <button
-                type="button"
-                className="bar-row overview-link"
-                key={role}
-                disabled={!can(actor, "participants", "read")}
-                onClick={() => openParticipants({ role, excludeDemo: true })}
-                aria-label={`View ${role === "organiser" ? "organizer" : role} participants`}
-              >
-                <span>{role === "organiser" ? "Organizer" : role}</span>
-                <div className="bar-track">
-                  <div style={{ width: `${(count / max) * 100}%` }} />
-                </div>
-                <strong>{count}</strong>
-              </button>
-            ))}
-          </div>
-        </section>
+            <div className="bars">
+              {Object.entries(roles).map(([role, count]) => (
+                <button
+                  type="button"
+                  className="bar-row overview-link"
+                  key={role}
+                  disabled={!can(actor, "participants", "read")}
+                  onClick={() => openParticipants({ role, excludeDemo: true })}
+                  aria-label={`View ${role === "organiser" ? "organizer" : role} participants`}
+                >
+                  <span>{role === "organiser" ? "Organizer" : role}</span>
+                  <div className="bar-track">
+                    <div style={{ width: `${(count / max) * 100}%` }} />
+                  </div>
+                  <strong>{count}</strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
         <section className="panel">
           <div className="panel-heading">
             <div>
@@ -1258,126 +1309,128 @@ function Overview({
           })}
         </section>
       </div>
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Recent activity</h2>
-            <p>
-              {can(actor, "audit", "read")
-                ? "Latest recorded changes, newest first"
-                : "Latest participant imports, newest first"}
-            </p>
+      {(can(actor, "audit", "read") || canOpenWorkspace(actor, "imports")) && (
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <h2>Recent activity</h2>
+              <p>
+                {can(actor, "audit", "read")
+                  ? "Latest recorded changes, newest first"
+                  : "Latest participant imports, newest first"}
+              </p>
+            </div>
+            <button
+              className="text-button"
+              disabled={
+                !can(
+                  actor,
+                  can(actor, "audit", "read") ? "audit" : "imports",
+                  "read",
+                )
+              }
+              onClick={() =>
+                navigate(can(actor, "audit", "read") ? "audit" : "imports")
+              }
+            >
+              View {can(actor, "audit", "read") ? "audit log" : "imports"}{" "}
+              <ArrowUpRight size={15} />
+            </button>
           </div>
-          <button
-            className="text-button"
-            disabled={
-              !can(
-                actor,
-                can(actor, "audit", "read") ? "audit" : "imports",
-                "read",
-              )
-            }
-            onClick={() =>
-              navigate(can(actor, "audit", "read") ? "audit" : "imports")
-            }
-          >
-            View {can(actor, "audit", "read") ? "audit log" : "imports"}{" "}
-            <ArrowUpRight size={15} />
-          </button>
-        </div>
-        {can(actor, "audit", "read") ? (
-          ((data.recentActivity as Row[]) || []).length ? (
-            <ol className="activity-list">
-              {(data.recentActivity as Row[]).map((item) => {
-                const action = String(item.action || "System update");
-                const resource = action.split(".")[0];
-                const destination = (
-                  {
-                    user: "users",
-                    participants: "participants",
-                    sessions: "sessions",
-                    submissions: "submissions",
-                    import: "imports",
-                    imports: "imports",
-                    email: "email",
-                    smtp: "email",
-                    role: "control",
-                    runtime: "control",
-                    conference: "conference",
-                    media: "media",
-                    coupons: "meals",
-                    fees: "fees",
-                    passes: "passes",
-                    redemptions: "redemptions",
-                  } as Record<string, string>
-                )[resource];
-                const permitted =
-                  destination && can(actor, destination, "read");
-                const date = new Date(String(item.createdAt));
-                return (
-                  <li key={item.id}>
-                    <span className="activity-mark">
-                      <CheckCircle2 size={18} />
-                    </span>
-                    <div className="activity-detail">
-                      <strong>{action.replace(/[._]/g, " ")}</strong>
-                      <span>
-                        {String(item.actorName || "System")} ?{" "}
-                        {String(item.target || "Application")}
+          {can(actor, "audit", "read") ? (
+            ((data.recentActivity as Row[]) || []).length ? (
+              <ol className="activity-list">
+                {(data.recentActivity as Row[]).map((item) => {
+                  const action = String(item.action || "System update");
+                  const resource = action.split(".")[0];
+                  const destination = (
+                    {
+                      user: "users",
+                      participants: "participants",
+                      sessions: "sessions",
+                      submissions: "submissions",
+                      import: "imports",
+                      imports: "imports",
+                      email: "email",
+                      smtp: "email",
+                      role: "control",
+                      runtime: "control",
+                      conference: "conference",
+                      media: "media",
+                      coupons: "meals",
+                      fees: "fees",
+                      passes: "passes",
+                      redemptions: "redemptions",
+                    } as Record<string, string>
+                  )[resource];
+                  const permitted =
+                    destination && can(actor, destination, "read");
+                  const date = new Date(String(item.createdAt));
+                  return (
+                    <li key={item.id}>
+                      <span className="activity-mark">
+                        <CheckCircle2 size={18} />
                       </span>
-                      <time
-                        dateTime={
-                          Number.isNaN(date.getTime())
-                            ? undefined
-                            : date.toISOString()
-                        }
-                      >
-                        {Number.isNaN(date.getTime())
-                          ? "Time unavailable"
-                          : date.toLocaleString("en-IN", {
-                              timeZone: "Asia/Kolkata",
-                              day: "numeric",
-                              month: "short",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}{" "}
-                        IST
-                      </time>
-                    </div>
-                    {permitted && (
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          destination === "participants"
-                            ? openParticipants({ excludeDemo: true })
-                            : navigate(destination)
-                        }
-                      >
-                        Open <ChevronRight size={15} />
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ol>
+                      <div className="activity-detail">
+                        <strong>{action.replace(/[._]/g, " ")}</strong>
+                        <span>
+                          {String(item.actorName || "System")} ?{" "}
+                          {String(item.target || "Application")}
+                        </span>
+                        <time
+                          dateTime={
+                            Number.isNaN(date.getTime())
+                              ? undefined
+                              : date.toISOString()
+                          }
+                        >
+                          {Number.isNaN(date.getTime())
+                            ? "Time unavailable"
+                            : date.toLocaleString("en-IN", {
+                                timeZone: "Asia/Kolkata",
+                                day: "numeric",
+                                month: "short",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}{" "}
+                          IST
+                        </time>
+                      </div>
+                      {permitted && (
+                        <button
+                          className="text-button"
+                          onClick={() =>
+                            destination === "participants"
+                              ? openParticipants({ excludeDemo: true })
+                              : navigate(destination)
+                          }
+                        >
+                          Open <ChevronRight size={15} />
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <Empty
+                title="No activity yet"
+                description="Recorded administrative changes will appear here."
+              />
+            )
+          ) : ((data.recentImports as Row[]) || []).length ? (
+            <Table
+              rows={data.recentImports as Row[]}
+              columns={["fileName", "status", "total", "createdAt"]}
+            />
           ) : (
             <Empty
               title="No activity yet"
-              description="Recorded administrative changes will appear here."
+              description="Your workbook imports will appear here once you upload them."
             />
-          )
-        ) : ((data.recentImports as Row[]) || []).length ? (
-          <Table
-            rows={data.recentImports as Row[]}
-            columns={["fileName", "status", "total", "createdAt"]}
-          />
-        ) : (
-          <Empty
-            title="No activity yet"
-            description="Your workbook imports will appear here once you upload them."
-          />
-        )}
-      </section>
+          )}
+        </section>
+      )}
     </>
   );
 }
@@ -1385,112 +1438,227 @@ function Table({
   rows,
   columns,
   onEdit,
+  readOnly = false,
   onDelete,
   deleting,
   deleteBlocked,
   ownUid,
+  compactParticipants = false,
 }: {
   rows: Row[];
   columns: string[];
+  readOnly?: boolean;
   onEdit?: (r: Row) => void;
   onDelete?: (r: Row) => void;
   deleting?: string;
   deleteBlocked?: string;
   ownUid?: string;
+  compactParticipants?: boolean;
 }) {
+  const [detail, setDetail] = useState<{
+    title: string;
+    value: string;
+    person: string;
+  } | null>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
   return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            {columns.map((c) => (
-              <th key={c}>{c.replace(/([A-Z])/g, " $1")}</th>
-            ))}
-            {(onEdit || onDelete) && (
-              <th>
-                <span className="sr-only">Actions</span>
-              </th>
-            )}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id}>
+    <>
+      <div
+        className={`table-wrap${compactParticipants ? " participant-table-wrap" : ""}`}
+        tabIndex={compactParticipants ? 0 : undefined}
+        role={compactParticipants ? "region" : undefined}
+        aria-label={
+          compactParticipants
+            ? "Participant records, scroll horizontally for more columns"
+            : undefined
+        }
+      >
+        <table>
+          <thead>
+            <tr>
               {columns.map((c) => (
-                <td key={c}>
-                  {[
-                    "status",
-                    "registrationStatus",
-                    "role",
-                    "accessRole",
-                  ].includes(c) ? (
-                    <span
-                      className={`badge ${row[c] === "confirmed" || row[c] === "active" || row[c] === "completed" ? "positive" : ""}`}
-                    >
-                      {label(row[c])}
-                    </span>
-                  ) : (
-                    <span
-                      className={
-                        c === "fullName" || c === "title" ? "cell-name" : ""
-                      }
-                    >
-                      {label(row[c])}
-                    </span>
-                  )}
-                  {c === "fullName" && row.accountType === "test" && (
-                    <>
-                      {" "}
-                      <span className="badge">Test login</span>
-                    </>
-                  )}
-                </td>
+                <th key={c}>
+                  {c === "feesReceived"
+                    ? "Workbook payment / DD reference"
+                    : c.replace(/([A-Z])/g, " $1")}
+                </th>
               ))}
               {(onEdit || onDelete) && (
-                <td>
-                  <div className="user-row-actions">
-                    {onEdit && (
-                      <button
-                        className="text-button"
-                        disabled={
-                          Boolean(deleting) || Boolean(row.deletionPending)
-                        }
-                        onClick={() => onEdit(row)}
-                      >
-                        Edit <ChevronRight size={14} />
-                      </button>
-                    )}
-                    {onDelete && (
-                      <button
-                        className="text-button delete-user-button"
-                        disabled={
-                          Boolean(deleting) ||
-                          Boolean(deleteBlocked) ||
-                          row.id === ownUid
-                        }
-                        aria-label={`Delete ${String(row.fullName || row.title || row.name || row.email || row.id)}`}
-                        title={
-                          row.id === ownUid
-                            ? "You cannot delete your own account"
-                            : deleteBlocked || "Delete"
-                        }
-                        onClick={() => onDelete(row)}
-                      >
-                        {deleting === row.id
-                          ? "Deleting..."
-                          : row.deletionPending
-                            ? "Retry Delete"
-                            : "Delete"}
-                      </button>
-                    )}
-                  </div>
-                </td>
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
               )}
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.id}>
+                {columns.map((c) => (
+                  <td key={c}>
+                    {compactParticipants &&
+                    row[c] &&
+                    (c === "discipline" ||
+                      ([
+                        "workingAs",
+                        "travelAssistance",
+                        "feesReceived",
+                      ].includes(c) &&
+                        label(row[c]).length > 60)) ? (
+                      <button
+                        className="text-button cell-view-button"
+                        aria-label={`View ${c.replace(/([A-Z])/g, " $1").toLowerCase()} for ${String(row.fullName || row.email)}`}
+                        onClick={(event) => {
+                          detailTrigger.current = event.currentTarget;
+                          setDetail({
+                            title:
+                              c === "discipline"
+                                ? "Discipline"
+                                : c === "feesReceived"
+                                  ? "Workbook payment / DD reference"
+                                  : c.replace(/([A-Z])/g, " $1"),
+                            value: label(row[c]),
+                            person: String(
+                              row.fullName || row.email || "Participant",
+                            ),
+                          });
+                        }}
+                      >
+                        View
+                      </button>
+                    ) : [
+                        "status",
+                        "registrationStatus",
+                        "role",
+                        "accessRole",
+                      ].includes(c) ? (
+                      <span
+                        className={`badge ${row[c] === "confirmed" || row[c] === "active" || row[c] === "completed" ? "positive" : ""}`}
+                      >
+                        {label(row[c])}
+                      </span>
+                    ) : (
+                      <span
+                        className={
+                          c === "fullName" || c === "title" ? "cell-name" : ""
+                        }
+                        title={compactParticipants ? label(row[c]) : undefined}
+                      >
+                        {label(row[c])}
+                      </span>
+                    )}
+                    {c === "fullName" && row.accountType === "test" && (
+                      <>
+                        {" "}
+                        <span className="badge">Test login</span>
+                      </>
+                    )}
+                  </td>
+                ))}
+                {(onEdit || onDelete) && (
+                  <td>
+                    <div className="user-row-actions">
+                      {onEdit && (
+                        <button
+                          className="text-button"
+                          disabled={
+                            Boolean(deleting) || Boolean(row.deletionPending)
+                          }
+                          onClick={() => onEdit(row)}
+                        >
+                          {readOnly ? "View details" : "Edit"}{" "}
+                          <ChevronRight size={14} />
+                        </button>
+                      )}
+                      {onDelete && (
+                        <button
+                          className="text-button delete-user-button"
+                          disabled={
+                            Boolean(deleting) ||
+                            Boolean(deleteBlocked) ||
+                            row.id === ownUid
+                          }
+                          aria-label={`Delete ${String(row.fullName || row.title || row.name || row.email || row.id)}`}
+                          title={
+                            row.id === ownUid
+                              ? "You cannot delete your own account"
+                              : deleteBlocked || "Delete"
+                          }
+                          onClick={() => onDelete(row)}
+                        >
+                          {deleting === row.id
+                            ? "Deleting..."
+                            : row.deletionPending
+                              ? "Retry Delete"
+                              : "Delete"}
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {detail && (
+        <CellDetailModal
+          detail={detail}
+          close={() => {
+            setDetail(null);
+            detailTrigger.current?.focus();
+          }}
+        />
+      )}
+    </>
+  );
+}
+function CellDetailModal({
+  detail,
+  close,
+}: {
+  detail: { title: string; value: string; person: string };
+  close: () => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  function dismiss() {
+    dialog.current?.close();
+    close();
+  }
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="modal table-cell-dialog"
+      aria-labelledby="cell-detail-title"
+      aria-describedby="cell-detail-value"
+      onCancel={(event) => {
+        event.preventDefault();
+        dismiss();
+      }}
+    >
+      <div className="panel-heading">
+        <div>
+          <h2 id="cell-detail-title">{detail.title}</h2>
+          <p>{detail.person}</p>
+        </div>
+        <button
+          className="icon-button"
+          aria-label="Close details"
+          onClick={dismiss}
+          autoFocus
+        >
+          <X />
+        </button>
+      </div>
+      <p id="cell-detail-value" className="cell-detail-value">
+        {detail.value}
+      </p>
+    </dialog>,
+    document.body,
   );
 }
 function Records({
@@ -1511,25 +1679,48 @@ function Records({
     [selected, setSelected] = useState<Row | null | undefined>();
   // Searched on the server across every record, a page at a time.
   const q = useDebounced(search.trim());
-  const list = usePagedList<Row>(`/records/${module}`, {
-    q: q.length >= 2 ? q : undefined,
-    ...(module === "participants"
-      ? {
-          role: participantFilter.role,
-          status: participantFilter.status,
-          excludeDemo: participantFilter.excludeDemo ? "true" : undefined,
-        }
-      : {}),
-  });
+  const paginated = module === "participants" || module === "users";
+  const list = usePagedList<Row>(
+    `/records/${module}`,
+    {
+      ...(paginated ? { limit: "50" } : {}),
+      q: q.length >= 2 ? q : undefined,
+      ...(module === "participants"
+        ? {
+            role: participantFilter.role,
+            status: participantFilter.status,
+            excludeDemo: participantFilter.excludeDemo ? "true" : undefined,
+          }
+        : {}),
+    },
+    paginated ? "pages" : "append",
+  );
   const { rows, next, loading } = list;
   const error = actionError || list.error;
   const load = list.reload;
   const columns =
     module === "participants"
-      ? ["fullName", "email", "role", "registrationStatus"]
+      ? [
+          "fullName",
+          "email",
+          "role",
+          "registrationStatus",
+          "discipline",
+          "category",
+          "presentationType",
+          "workingAs",
+          "district",
+          "softCopy",
+          "accommodation",
+          "travelAssistance",
+          "earlierAwardee",
+          ...(can(actor, "fees", "read") ? [...financialFields] : []),
+        ]
       : module === "users"
         ? ["fullName", "email", "accessRole", "status"]
-        : fields[module].slice(0, 4).map((f) => f.key);
+        : module === "fees"
+          ? ["participantEmail", "amount", "currency", "status", "reference"]
+          : fields[module].slice(0, 4).map((f) => f.key);
   const filtered = rows;
   return (
     <>
@@ -1557,7 +1748,9 @@ function Records({
           <span className="record-count" aria-live="polite">
             {loading && !rows.length
               ? "Loading…"
-              : `${rows.length}${next ? "+" : ""} ${q.length >= 2 ? "found" : "shown"}`}
+              : paginated
+                ? `${rows.length} ${q.length >= 2 ? "found" : "shown"} · 50 per page`
+                : `${rows.length}${next ? "+" : ""} ${q.length >= 2 ? "found" : "shown"}`}
           </span>
           {module === "participants" &&
             Object.keys(participantFilter).length > 0 && (
@@ -1592,27 +1785,25 @@ function Records({
               Export
             </button>
           )}
-          <button
-            className="primary"
-            disabled={!can(actor, module, "write")}
-            onClick={() => setSelected(null)}
-          >
-            <Plus size={17} />
-            Add{" "}
-            {module === "users"
-              ? "user"
-              : module === "participants"
-                ? "participant"
-                : module === "sessions"
-                  ? "session"
-                  : module === "disciplines"
-                    ? "discipline"
-                    : module === "submissions"
-                      ? "paper"
-                      : module === "meals"
-                        ? "meal"
-                        : "record"}
-          </button>
+          {can(actor, module, "write") && (
+            <button className="primary" onClick={() => setSelected(null)}>
+              <Plus size={17} />
+              Add{" "}
+              {module === "users"
+                ? "user"
+                : module === "participants"
+                  ? "participant"
+                  : module === "sessions"
+                    ? "session"
+                    : module === "disciplines"
+                      ? "discipline"
+                      : module === "submissions"
+                        ? "paper"
+                        : module === "meals"
+                          ? "meal"
+                          : "record"}
+            </button>
+          )}
         </div>
         {module === "users" && (
           <p className="inline-note">
@@ -1626,7 +1817,9 @@ function Records({
           <Table
             rows={filtered}
             columns={columns}
-            onEdit={can(actor, module, "write") ? setSelected : undefined}
+            compactParticipants={module === "participants"}
+            onEdit={setSelected}
+            readOnly={!can(actor, module, "write")}
             ownUid={actor.uid}
             deleting={deleting}
             deleteBlocked={
@@ -1699,10 +1892,44 @@ function Records({
             }
           />
         )}
-        <LoadMore next={next} loading={loading} onLoad={list.loadMore} />
+        {paginated ? (
+          <nav
+            className="record-pagination"
+            aria-label={
+              module === "users" ? "User pagination" : "Participant pagination"
+            }
+          >
+            <span aria-live="polite">
+              Page {list.pageNumber} · 50 rows per page
+            </span>
+            <div>
+              <button
+                className="secondary"
+                disabled={loading || list.pageNumber === 1}
+                onClick={list.previousPage}
+              >
+                <ArrowLeft size={16} />
+                Previous
+              </button>
+              <button
+                className="secondary"
+                disabled={loading || !next}
+                onClick={list.loadMore}
+              >
+                Next
+                <ArrowRight size={16} />
+              </button>
+            </div>
+          </nav>
+        ) : (
+          <LoadMore next={next} loading={loading} onLoad={list.loadMore} />
+        )}
       </section>
-      {module === "users" && <InviteUser />}
-      {module === "meals" && <CouponTools />}
+      {module === "fees" && (
+        <WorkbookFees writable={can(actor, "fees", "write")} />
+      )}
+      {module === "users" && can(actor, "users", "write") && <InviteUser />}
+      {module === "meals" && can(actor, "meals", "write") && <CouponTools />}
       {selected !== undefined && (
         <Editor
           actor={actor}
@@ -1735,6 +1962,7 @@ function Editor({
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const [roleOptions, setRoleOptions] = useState<string[]>([...accessRoles]);
+  const editable = can(actor, module, "write");
   useEffect(() => {
     if (module === "users")
       request<{ id: string; active: boolean }[]>("/control/roles")
@@ -1743,11 +1971,17 @@ function Editor({
         )
         .catch((e) => setError(e.message));
   }, [module]);
-  const editorFields = fields[module].map((f) =>
-    f.key === "accessRole" ? { ...f, options: roleOptions } : f,
-  );
+  const editorFields = fields[module]
+    .filter(
+      (f) =>
+        module !== "participants" ||
+        f.key !== "registrationFee" ||
+        can(actor, "fees", editable ? "write" : "read"),
+    )
+    .map((f) => (f.key === "accessRole" ? { ...f, options: roleOptions } : f));
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if (!editable) return;
     setBusy(true);
     setError("");
     const form = new FormData(e.currentTarget);
@@ -1775,7 +2009,7 @@ function Editor({
       setBusy(false);
     }
   }
-  return (
+  return createPortal(
     <div className="modal-backdrop">
       <section
         className="modal"
@@ -1786,7 +2020,13 @@ function Editor({
         <div className="panel-heading">
           <div>
             <p className="eyebrow">CONFERENCE DATA</p>
-            <h2 id="editor-title">{row ? "Edit record" : "Create a record"}</h2>
+            <h2 id="editor-title">
+              {!editable
+                ? "Record details"
+                : row
+                  ? "Edit record"
+                  : "Create a record"}
+            </h2>
           </div>
           <button className="icon-button" onClick={close} aria-label="Close">
             <X />
@@ -1805,6 +2045,7 @@ function Editor({
                 {f.options ? (
                   <select
                     name={f.key}
+                    disabled={!editable}
                     defaultValue={String(row?.[f.key] ?? f.options[0])}
                   >
                     {f.options.map((o) => (
@@ -1816,6 +2057,7 @@ function Editor({
                 ) : f.type === "textarea" ? (
                   <textarea
                     name={f.key}
+                    readOnly={!editable}
                     required={f.required}
                     defaultValue={String(row?.[f.key] || "")}
                     rows={4}
@@ -1827,12 +2069,26 @@ function Editor({
                     required={f.required}
                     min={f.type === "number" ? 0 : undefined}
                     defaultValue={String(row?.[f.key] || "")}
-                    readOnly={Boolean(row && f.key === "email")}
+                    readOnly={!editable || Boolean(row && f.key === "email")}
                   />
                 )}
               </label>
             ))}
           </div>
+          {module === "participants" && row && can(actor, "fees", "read") && (
+            <dl className="record-details">
+              {!can(actor, "fees", "write") && (
+                <div>
+                  <dt>Registration fee (INR)</dt>
+                  <dd>{label(row.registrationFee)}</dd>
+                </div>
+              )}
+              <div>
+                <dt>Workbook payment / DD reference</dt>
+                <dd>{label(row.feesReceived)}</dd>
+              </div>
+            </dl>
+          )}
           {module === "participants" && row && actor.role === "superadmin" && (
             <TestAccountToggle row={row} />
           )}
@@ -1871,13 +2127,16 @@ function Editor({
                   Archive record
                 </button>
               )}
-            <button className="primary" disabled={busy}>
-              {busy ? "Saving…" : "Save record"}
-            </button>
+            {editable && (
+              <button className="primary" disabled={busy}>
+                {busy ? "Saving…" : "Save record"}
+              </button>
+            )}
           </div>
         </form>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 // Saved on its own, straight away: it is not part of the registration form.

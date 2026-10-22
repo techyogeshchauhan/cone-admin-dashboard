@@ -209,6 +209,7 @@ function normalise(
     "dob",
     "rollNo",
     "remark",
+    "travelAssistance",
   ])
     if (fields[field]) optional[field] = fields[field];
   const person: Record<string, unknown> = {

@@ -7,6 +7,17 @@ const registrationWorkbook = async () =>
   readWorkbook(await registrationWorkbookBuffer());
 
 describe("registration workbook intake", () => {
+  it("keeps travel assistance separate from accommodation", async () => {
+    const workbook = await registrationWorkbook();
+    const sheet = workbook.getWorksheet("Chemical Sciences")!;
+    sheet.getCell("T4").value = "TA required";
+    sheet.getCell("T5").value = "Yes";
+    const row = parseRegistrationWorkbook(workbook).rows[0];
+    expect(row.person).toMatchObject({
+      travelAssistance: "Yes",
+      accommodation: "No",
+    });
+  });
   it("finds each sheet's header row and skips summary, empty and total rows", async () => {
     const { sheets } = parseRegistrationWorkbook(await registrationWorkbook());
     expect(sheets).toEqual([

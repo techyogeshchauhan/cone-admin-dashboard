@@ -18,6 +18,15 @@ import {
   saveDashboardUser,
 } from "./control.js";
 import { resolveRole } from "../shared/control.js";
+import { registerDepartmentRecords } from "./department-records.js";
+import {
+  participantRecord,
+  pickFields,
+  registrationFields,
+  financialFields,
+  overviewAccess,
+  canOpenWorkspace,
+} from "../shared/role-fields.js";
 import { registerTestingVerification } from "./testing-verification.js";
 import {
   registerTestAccountAdmin,
@@ -379,9 +388,39 @@ app.use("/api", async (req, res, next) => {
   }
 });
 app.use("/api/control", controlRouter);
+// Raw workbook endpoints expose registration and payment source columns.
+app.use("/api", (req, _res, next) => {
+  if (req.path.startsWith("/imports") || req.path === "/import-template") {
+    const actor = actorOf(req);
+    if (!canOpenWorkspace(actor, "imports"))
+      return next(
+        Object.assign(
+          new Error(
+            "Workbook access requires registration and fee read permissions",
+          ),
+          { status: 403 },
+        ),
+      );
+    if (
+      req.method !== "GET" &&
+      req.path.endsWith("/commit") &&
+      (!can(actor, "participants", "write") || !can(actor, "fees", "write"))
+    )
+      return next(
+        Object.assign(
+          new Error(
+            "Import commits require registration and fee write permissions",
+          ),
+          { status: 403 },
+        ),
+      );
+  }
+  next();
+});
 registerBrandingAdmin(app, storage);
 registerSelfieAdmin(app, storage);
 registerTestAccountAdmin(app);
+registerDepartmentRecords(app, storage);
 app.get("/api/workspace-settings", async (_req, res) => {
   const config: Awaited<ReturnType<typeof runtimeConfiguration>> =
     res.locals.runtime ?? (await runtimeConfiguration());
@@ -396,21 +435,27 @@ app.get("/api/profile", async (req, res) => {
     db.doc(`people/${actorOf(req).email.toLowerCase()}`).get(),
     db.doc("conference/main").get(),
   ]);
-  const data = person.data();
+  const stored = person.data();
+  const data =
+    stored &&
+    !stored.archivedAt &&
+    !["cancelled", "suspended"].includes(stored.registrationStatus)
+      ? stored
+      : null;
   res.json({
     profile: data
-      ? Object.fromEntries(
-          [
-            "fullName",
-            "email",
-            "mobile",
-            "affiliation",
-            "registrationId",
-            "registrationStatus",
-            "role",
-            "coupons",
-          ].map((key) => [key, data[key] ?? null]),
-        )
+      ? {
+          ...Object.fromEntries(
+            [
+              ...registrationFields.filter((key) => key !== "remark"),
+              ...financialFields,
+              "coupons",
+            ].map((key) => [key, data[key] ?? null]),
+          ),
+          ...(data.role === "presenter" && data.paper?.title
+            ? { abstractTitle: data.paper.title }
+            : {}),
+        }
       : null,
     schedule: [
       ...(conference.data()?.schedule || []),
@@ -422,56 +467,168 @@ app.get("/api/profile", async (req, res) => {
     ),
   });
 });
+app.get("/api/profile/fees", async (req, res) => {
+  requirePermission(req, "self");
+  const email = actorOf(req).email.toLowerCase();
+  const person = (await db.doc(`people/${email}`).get()).data();
+  if (
+    !person ||
+    person.archivedAt ||
+    ["cancelled", "suspended"].includes(person.registrationStatus)
+  )
+    return res.json({ rows: [], next: null });
+  const page = await readPage({
+    query: db
+      .collection("feeRecords")
+      .where("participantEmail", "==", email)
+      .orderBy("__name__"),
+    collection: "feeRecords",
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+    byId: true,
+    keep: (d) => !d.archivedAt && d.participantEmail === email,
+  });
+  res.json({
+    ...page,
+    rows: page.rows.map((row) =>
+      pickFields(row, ["id", "amount", "currency", "status", "reference"]),
+    ),
+  });
+});
+app.get("/api/fees/workbook", async (req, res) => {
+  requirePermission(req, "fees");
+  const terms = searchTerms(req.query.q);
+  const page = await readPage({
+    query: db
+      .collection("people")
+      .orderBy("__name__")
+      .select(
+        "fullName",
+        "email",
+        "registrationId",
+        "registrationFee",
+        "feesReceived",
+        "importSource",
+        "archivedAt",
+        "isDemo",
+      ),
+    collection: "people",
+    limit: pageSize(req.query.limit),
+    after: cursorOf(req.query.after),
+    byId: true,
+    keep: (d) =>
+      !d.archivedAt &&
+      !d.isDemo &&
+      !!(d.importSource || d.feesReceived !== undefined) &&
+      terms.every((term) =>
+        [d.fullName, d.email, d.registrationId, d.feesReceived].some((v) =>
+          String(v ?? "")
+            .toLowerCase()
+            .includes(term),
+        ),
+      ),
+  });
+  res.json({
+    ...page,
+    rows: page.rows.map((row) =>
+      pickFields(row, [
+        "id",
+        "fullName",
+        "email",
+        "registrationId",
+        ...financialFields,
+      ]),
+    ),
+  });
+});
 // Counting registrations reads every participant, so the result is kept for
 // a short while; any change made through the API clears it.
 const overviews = memo<Record<string, unknown>>();
-async function overview(withActivity: boolean) {
-  const [people, redemptions, imports, activity] = await Promise.all([
-    db
-      .collection("people")
-      .select("isDemo", "archivedAt", "registrationStatus", "role")
-      .get(),
-    db.collection("mealRedemptions").count().get(),
-    db
-      .collection("importJobs")
-      .orderBy("createdAt", "desc")
-      .select("fileName", "status", "total", "createdAt", "kind")
-      .limit(5)
-      .get(),
-    withActivity ? readLog("audit", { limit: 8 }) : Promise.resolve(null),
+async function overview(access: ReturnType<typeof overviewAccess>) {
+  const [people, redemptions, imports, activity, fees] = await Promise.all([
+    access.people
+      ? db
+          .collection("people")
+          .select("isDemo", "archivedAt", "registrationStatus", "role")
+          .get()
+      : null,
+    access.meals ? db.collection("mealRedemptions").count().get() : null,
+    access.imports
+      ? db
+          .collection("importJobs")
+          .orderBy("createdAt", "desc")
+          .select("fileName", "status", "total", "createdAt", "kind")
+          .limit(5)
+          .get()
+      : null,
+    access.audit ? readLog("audit", { limit: 8 }) : null,
+    access.fees
+      ? db
+          .collection("feeRecords")
+          .select("amount", "status", "archivedAt")
+          .get()
+      : null,
   ]);
-  const rows = people.docs
+  const rows = (people?.docs || [])
     .map((d) => d.data())
     .filter((d) => !d.isDemo && !d.archivedAt);
+  const feeRows = (fees?.docs || [])
+    .map((d) => d.data())
+    .filter((d) => !d.archivedAt);
   return {
-    registrations: rows.length,
-    confirmed: rows.filter((p) => p.registrationStatus === "confirmed").length,
-    presenters: rows.filter((p) => p.role === "presenter").length,
-    mealsServed: redemptions.data().count,
-    byRole: Object.fromEntries(
-      ["presenter", "attendee", "speaker", "vip", "organiser", "volunteer"].map(
-        (role) => [role, rows.filter((p) => p.role === role).length],
-      ),
-    ),
-    recentImports: imports.docs.map((d) => ({ id: d.id, ...d.data() })),
-    recentActivity:
-      activity?.rows.map((entry) => ({
-        id: entry.id,
-        action: entry.action,
-        actorName: entry.actorName || "System",
-        target: entry.target || "Application",
-        createdAt: entry.createdAt,
-      })) || [],
+    ...(access.people
+      ? {
+          registrations: rows.length,
+          confirmed: rows.filter((p) => p.registrationStatus === "confirmed")
+            .length,
+          presenters: rows.filter((p) => p.role === "presenter").length,
+          byRole: Object.fromEntries(
+            [
+              "presenter",
+              "attendee",
+              "speaker",
+              "vip",
+              "organiser",
+              "volunteer",
+            ].map((role) => [role, rows.filter((p) => p.role === role).length]),
+          ),
+        }
+      : {}),
+    ...(access.meals ? { mealsServed: redemptions?.data().count ?? 0 } : {}),
+    ...(access.fees
+      ? {
+          feeRecords: feeRows.length,
+          feesReceivedAmount: feeRows
+            .filter((d) => d.status === "received")
+            .reduce((sum, d) => sum + Number(d.amount || 0), 0),
+        }
+      : {}),
+    ...(access.imports
+      ? {
+          recentImports: (imports?.docs || []).map((d) => ({
+            id: d.id,
+            ...d.data(),
+          })),
+        }
+      : {}),
+    ...(access.audit
+      ? {
+          recentActivity:
+            activity?.rows.map((entry) => ({
+              id: entry.id,
+              action: entry.action,
+              actorName: entry.actorName || "System",
+              target: entry.target || "Application",
+              createdAt: entry.createdAt,
+            })) || [],
+        }
+      : {}),
   };
 }
 app.get("/api/overview", async (req, res) => {
   requirePermission(req, "reports");
-  const withActivity = can(actorOf(req), "audit", "read");
-  res.json(
-    await overviews(withActivity ? "activity" : "counts", () =>
-      overview(withActivity),
-    ),
-  );
+  const access = overviewAccess(actorOf(req));
+  res.json(await overviews(JSON.stringify(access), () => overview(access)));
 });
 app.get("/api/conference", async (req, res) => {
   requirePermission(req, "conference");
@@ -684,7 +841,9 @@ app.get("/api/records/:module", async (req, res) => {
   });
   res.json({
     ...page,
-    rows: page.rows.map(({ searchKeys: _keys, ...row }) => row),
+    rows: page.rows.map(({ searchKeys: _keys, ...row }) =>
+      module === "participants" ? participantRecord(actorOf(req), row) : row,
+    ),
   });
 });
 app.post("/api/records/:module", async (req, res) => {
@@ -701,6 +860,15 @@ app.post("/api/records/:module", async (req, res) => {
     .parse(req.body);
   const data = schemas[module].parse(input.data) as Record<string, unknown>;
   const actor = actorOf(req);
+  if (module === "participants" && !can(actor, "fees", "write")) {
+    if (
+      input.data &&
+      typeof input.data === "object" &&
+      "registrationFee" in input.data
+    )
+      fail("Changing registration fees requires fee write permission", 403);
+    delete data.registrationFee;
+  }
   let id = input.id || randomUUID();
   if (module === "participants") {
     id = String(data.email);
@@ -906,9 +1074,13 @@ app.post("/api/records/:module", async (req, res) => {
       );
       const person = await tx.get(participantRef);
       if (!person.exists) fail("Participant not found", 404);
-      if (old.exists && old.data()!.participantEmail !== data.participantEmail)
+      if (
+        old.exists &&
+        String(old.data()!.participantEmail).toLowerCase() !==
+          data.participantEmail
+      )
         fail("A fee record cannot be reassigned to a different participant");
-      tx.update(participantRef, { feesReceived: String(data.status) });
+      // feesReceived is the workbook's payment reference, not ledger status.
     }
     const extras =
       module === "participants" && !old.exists
@@ -2082,6 +2254,7 @@ app.post("/api/email/queue", async (req, res) => {
 });
 app.get("/api/reports/participants", async (req, res) => {
   requirePermission(req, "reports");
+  requirePermission(req, "participants");
   const participants = await db.collection("people").limit(5000).get();
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Registrations");
@@ -2094,12 +2267,15 @@ app.get("/api/reports/participants", async (req, res) => {
     "registrationStatus",
     "affiliation",
     "discipline",
-    "registrationFee",
+    ...(can(actorOf(req), "fees", "read")
+      ? ["registrationFee", "feesReceived"]
+      : []),
     "accommodation",
   ];
   sheet.addRow(columns);
   for (const person of participants.docs) {
     const data = person.data();
+    if (data.archivedAt) continue;
     sheet.addRow(
       columns.map((key) => {
         const value = data[key];
