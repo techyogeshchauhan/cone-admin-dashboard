@@ -81,6 +81,8 @@ export async function tick() {
       await document.ref.update({
         status: "sent",
         sentAt: new Date().toISOString(),
+        deliveryFormat: "html",
+        rendererVersion: "cone-branded-v1",
         error: null,
       });
     } catch (error) {
@@ -132,7 +134,7 @@ const pausedFor = (error: unknown) =>
 // (Polling every few seconds cost about 57,000 reads a day, more than the
 // whole free daily quota.)
 if (process.env.NODE_ENV !== "test") {
-  console.log("CONE email worker started");
+  console.log("CONE email worker started (cone-branded-v1, HTML + plain text)");
   let jobs: Record<string, unknown>[] = [];
   let listenerError: unknown = null;
   const listen = () =>

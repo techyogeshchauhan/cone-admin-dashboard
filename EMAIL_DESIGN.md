@@ -22,6 +22,14 @@ Run `npm run build`, then restart the API and email worker to apply the changes
 on a deployed installation. No Firebase configuration changes are needed for
 these server-sent messages.
 
+`npm run dev` and `npm run worker` watch the worker and its renderer imports, so
+local source updates restart email delivery too. Restart an already running
+development command once to pick up this script change. Successful new deliveries
+record `deliveryFormat: "html"` and `rendererVersion: "cone-branded-v1"` on the
+email job. Messages sent earlier do not change in an inbox. A worker on another
+machine connected to the same Firebase project must also be updated/restarted;
+it competes for the same queued jobs.
+
 The login page's **Forgot your password?** still calls Firebase directly. That
 provider-managed email is outside this SMTP renderer and retains its Firebase
 template. Legacy Firebase email-link sign-in is also provider-managed.
