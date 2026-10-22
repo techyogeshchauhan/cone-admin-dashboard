@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import nodemailer from "nodemailer";
 const m = vi.hoisted(() => ({
   collection: vi.fn(),
   doc: vi.fn(),
@@ -64,8 +65,29 @@ describe("SMTP email worker", () => {
       }),
     );
     expect(update).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "sent" }),
+      expect.objectContaining({
+        status: "sent",
+        deliveryFormat: "html",
+        rendererVersion: "cone-branded-v1",
+      }),
     );
+  });
+  it("assembles HTML and plain text as multipart email without contacting SMTP", async () => {
+    const transport = nodemailer.createTransport({
+      streamTransport: true,
+      buffer: true,
+      newline: "unix",
+    });
+    const deliver = vi.fn((options) => transport.sendMail(options));
+    m.mailTransport.mockResolvedValue({ sendMail: deliver });
+    await tick();
+    expect(deliver).toHaveBeenCalledOnce();
+    const message = (await deliver.mock.results[0].value).message.toString();
+    expect(message).toMatch(/Content-Type: multipart\/alternative;/);
+    expect(message).toMatch(/Content-Type: text\/plain; charset=utf-8/);
+    expect(message).toMatch(/Content-Type: text\/html; charset=utf-8/);
+    expect(message).toContain("Hello Alice");
+    expect(message).toContain("CONFERENCE COMMUNICATION");
   });
   it("pauses delivery when disabled", async () => {
     m.runtimeConfiguration.mockResolvedValue({ emailEnabled: false });
