@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { dashboardTestRoles } from "../shared/dashboard-test-roles";
 for (const { role, label } of dashboardTestRoles) {
-  test(`one click opens the ${label} dashboard`, async ({ page }) => {
+  test(`${role === "superadmin" ? "manual login" : "one click"} opens the ${label} dashboard`, async ({
+    page,
+  }) => {
     const uid = `test-${role}`,
       email = `${role.replaceAll("_", "-")}@cone-admin.test`;
     const encode = (value: unknown) =>
@@ -93,7 +95,15 @@ for (const { role, label } of dashboardTestRoles) {
       "",
     );
     await expect(page.getByLabel("Password", { exact: true })).toHaveValue("");
-    for (const other of dashboardTestRoles)
+    await expect(
+      page.getByRole("button", { name: "Login as Super Admin", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByText("All application and software controls", { exact: true }),
+    ).toHaveCount(0);
+    for (const other of dashboardTestRoles.filter(
+      ({ role }) => role !== "superadmin",
+    ))
       await expect(
         page.getByRole("button", {
           name: `Login as ${other.label}`,
@@ -105,9 +115,19 @@ for (const { role, label } of dashboardTestRoles) {
         path: "test-results/development-role-login.png",
         fullPage: true,
       });
-    await page
-      .getByRole("button", { name: `Login as ${label}`, exact: true })
-      .click();
+    if (role === "superadmin") {
+      await page.getByLabel("Email address", { exact: true }).fill(email);
+      await page
+        .getByLabel("Password", { exact: true })
+        .fill("fixture-only-password");
+      await page
+        .getByRole("button", { name: "Sign in to workspace", exact: true })
+        .click();
+    } else {
+      await page
+        .getByRole("button", { name: `Login as ${label}`, exact: true })
+        .click();
+    }
     const heading =
       role === "programme_manager"
         ? "Programme"

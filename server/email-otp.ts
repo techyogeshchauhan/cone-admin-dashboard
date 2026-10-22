@@ -9,6 +9,8 @@ import { z } from "zod";
 import { auth, db } from "./firebase.js";
 import { mailTransport, sender } from "./mail.js";
 import { mobile } from "../shared/schema.js";
+import { signInCodeEmail } from "../shared/email-design.js";
+import { emailBranding } from "./email-branding.js";
 
 export const identitySchema = z
   .object({
@@ -171,8 +173,7 @@ export async function requestEmailOtp(body: unknown, ip: string) {
       ).sendMail({
         from: await sender(),
         to: identity.email,
-        subject: "Your CONE sign-in code",
-        text: `Your CONE sign-in code is ${code}. It expires in 5 minutes. Do not share this code. If you did not request it, ignore this email.`,
+        ...signInCodeEmail(code, await emailBranding()),
       });
       await ref.update({ status: "pending" });
     } catch {

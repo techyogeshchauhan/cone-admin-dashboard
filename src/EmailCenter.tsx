@@ -10,6 +10,8 @@ import {
 } from "../shared/email-templates";
 import SearchBox, { matchesSearch, NoMatches } from "./SearchBox";
 import SmtpSettings from "./SmtpSettings";
+import { useBranding } from "./Branding";
+import { renderEmail, signInCodeEmail } from "../shared/email-design";
 import { LoadMore, usePagedList } from "./paging";
 type Template = {
   id: string;
@@ -46,6 +48,13 @@ export default function EmailCenter({
   children: ReactNode;
   isSuperAdmin?: boolean;
 }) {
+  const { branding } = useBranding();
+  const emailBrand = {
+    ...branding,
+    logoUrl: branding.logoUrl
+      ? new URL(branding.logoUrl, window.location.origin).href
+      : null,
+  };
   const [templates, setTemplates] = useState<Template[]>([]),
     [error, setError] = useState(""),
     [note, setNote] = useState(""),
@@ -183,8 +192,9 @@ export default function EmailCenter({
           </span>
           <h2>A message worth sending.</h2>
           <p className="subtitle">
-            Save a plain-text template. Placeholders such as {"{{name}}"} or{" "}
-            {"{{schedule}}"} are filled from each recipient's own registration.
+            Write your message and we will format it as a branded email.
+            Placeholders such as {"{{name}}"} or {"{{schedule}}"} are filled
+            from each recipient's own registration.
           </p>
           <button
             type="button"
@@ -310,7 +320,21 @@ export default function EmailCenter({
                   Preview{loaded[0] ? ` for ${loaded[0].fullName}` : ""}
                 </summary>
                 <strong>{renderTemplate(template.subject, sample)}</strong>
-                <pre>{renderTemplate(template.body, sample)}</pre>
+                <iframe
+                  title="Email design preview"
+                  className="email-design-frame"
+                  sandbox=""
+                  referrerPolicy="no-referrer"
+                  srcDoc={renderEmail({
+                    subject: renderTemplate(template.subject, sample),
+                    text: renderTemplate(template.body, sample),
+                    brand: emailBrand,
+                  })}
+                />
+                <details className="email-text-preview">
+                  <summary>Plain-text version</summary>
+                  <pre>{renderTemplate(template.body, sample)}</pre>
+                </details>
               </details>
             )}
             <button className="primary" disabled={busy || !templates.length}>
@@ -324,6 +348,19 @@ export default function EmailCenter({
           </p>
         </section>
       </div>
+      <details className="email-preview">
+        <summary>Sign-in code email preview</summary>
+        <p className="inline-note">
+          Sample code only. The real code is generated for each sign-in.
+        </p>
+        <iframe
+          title="Sign-in code email preview"
+          className="email-design-frame"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={signInCodeEmail("123456", emailBrand).html}
+        />
+      </details>
       {isSuperAdmin && <SmtpSettings />}
       {children}
       <section className="panel">

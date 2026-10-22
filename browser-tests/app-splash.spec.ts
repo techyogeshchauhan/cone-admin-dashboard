@@ -78,8 +78,10 @@ test("signing in shows what the wait is for until the workspace opens", async ({
     return route.fulfill({ json: { rows: [], next: null } });
   });
   await page.goto("/");
+  await page.getByLabel("Email address", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("fixture-password");
   await page
-    .getByRole("button", { name: "Login as Super Admin", exact: true })
+    .getByRole("button", { name: "Sign in to workspace", exact: true })
     .click();
 
   const splash = page.locator(".app-splash");

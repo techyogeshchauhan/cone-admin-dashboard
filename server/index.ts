@@ -1,5 +1,7 @@
 import { registerPublicBranding, registerBrandingAdmin } from "./branding.js";
 import { registerEmailOtp } from "./email-otp.js";
+import { renderEmail } from "../shared/email-design.js";
+import { emailBranding } from "./email-branding.js";
 import {
   ensureIdentity,
   ensurePerson,
@@ -1888,6 +1890,11 @@ app.post("/api/email/test", async (req, res) => {
       to: email,
       subject: "CONE SMTP connection test",
       text: "Your CONE dashboard SMTP connection is working.",
+      html: renderEmail({
+        subject: "SMTP connection successful",
+        text: "Your CONE dashboard SMTP connection is working.\n\nYour email settings are ready to deliver conference messages and sign-in codes.",
+        brand: await emailBranding(),
+      }),
     });
     await ref.update({ status: "sent" });
     await audit(actorOf(req), "email.test", ref.id);
@@ -2002,7 +2009,7 @@ app.post("/api/users/invite", async (req, res) => {
     recipient: data.email,
     recipientName: data.fullName,
     subject: "Your CONE dashboard invitation",
-    body: `Hello {{name}},\n\n${verification ? `Verify your email:\n${verification}\n\n` : ""}Set your password:\n${reset}\n\nSign in at ${process.env.ADMIN_BASE_URL || "http://localhost:3000"}\n\nPrivileged accounts may also require MFA enrollment.`,
+    body: `Hello {{name}},\n\nYou have been invited to the CONE conference dashboard. Complete the steps below to get your account ready.\n\n${verification ? `Verify your email:\n${verification}\n\n` : ""}Set your password:\n${reset}\n\nOpen the dashboard:\n${process.env.ADMIN_BASE_URL || "http://localhost:3000"}\n\nPrivileged accounts may also require MFA enrollment.\n\nThis invitation is personal to you. Do not forward it or share the account setup links.`,
     status: "queued",
     attempts: 0,
     createdAt: new Date().toISOString(),

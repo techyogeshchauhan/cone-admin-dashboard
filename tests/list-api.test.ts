@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import supertest from "supertest";
 import { fakeFirestore } from "./fake-firestore.js";
 import { personSearchKeys } from "../shared/search.js";
@@ -14,6 +17,7 @@ vi.mock("../server/firebase.js", () => ({
 }));
 import { app } from "../server/index.js";
 import { clearRequestCaches } from "../server/request-cache.js";
+import { appendLog } from "../server/activity-log.js";
 const api = supertest(app);
 const get = (path: string) =>
   api.get(path).set("Authorization", "Bearer token");
@@ -114,23 +118,34 @@ describe("paged lists", () => {
   });
 
   it("lists activity newest first, a page at a time", async () => {
-    for (let i = 1; i <= 30; i++)
-      m.fake.store.set(`auditLogs/a${i}`, {
-        action: `step ${i}`,
-        createdAt: `2026-10-20T10:${String(i).padStart(2, "0")}:00.000Z`,
-      });
-    const first = await get("/api/audit");
-    expect(first.body.rows[0].action).toBe("step 30");
-    expect(first.body.rows).toHaveLength(25);
-    const second = await get(`/api/audit?after=${first.body.next}`);
-    expect(second.body.rows.map((r: { action: string }) => r.action)).toEqual([
-      "step 5",
-      "step 4",
-      "step 3",
-      "step 2",
-      "step 1",
-    ]);
-    expect(second.body.next).toBeNull();
+    const temporaryRoot = path.resolve(tmpdir());
+    const logDirectory = await mkdtemp(
+      path.join(temporaryRoot, "cone-list-api-"),
+    );
+    vi.stubEnv("LOG_DIR", logDirectory);
+    try {
+      for (let i = 1; i <= 30; i++)
+        await appendLog("audit", {
+          action: `step ${i}`,
+          createdAt: `2026-10-20T10:${String(i).padStart(2, "0")}:00.000Z`,
+        });
+      const first = await get("/api/audit");
+      expect(first.body.rows[0].action).toBe("step 30");
+      expect(first.body.rows).toHaveLength(25);
+      const second = await get(`/api/audit?after=${first.body.next}`);
+      expect(second.body.rows.map((r: { action: string }) => r.action)).toEqual(
+        ["step 5", "step 4", "step 3", "step 2", "step 1"],
+      );
+      expect(second.body.next).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+      if (
+        !path.resolve(logDirectory).startsWith(`${temporaryRoot}${path.sep}`) ||
+        !path.basename(logDirectory).startsWith("cone-list-api-")
+      )
+        throw new Error("Refusing to remove an unexpected temporary directory");
+      await rm(logDirectory, { recursive: true, force: true });
+    }
   });
 
   it("sends only the delivery columns of queued emails, not their bodies", async () => {

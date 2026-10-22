@@ -93,7 +93,10 @@ const designs: Record<string, RoleDesign> = {
 };
 export const sectionGroups = [
   { title: "Workspace", pages: ["overview", "profile", "control"] },
-  { title: "People & access", pages: ["participants", "users"] },
+  {
+    title: "People & access",
+    pages: ["participants", "users", "testAccounts"],
+  },
   {
     title: "Conference planning",
     pages: [
@@ -124,6 +127,8 @@ export const pageDescriptions: Record<string, string> = {
   control: "Manage access, configuration, and operations from one place.",
   participants: "Find participants and keep registration details up to date.",
   users: "Manage workspace accounts, roles, and access.",
+  testAccounts:
+    "Accounts that sign in to the mobile app without an email code.",
   sessions: "Organize your sessions, timings, and presentation venues.",
   disciplines: "Keep conference disciplines and categories organized.",
   submissions: "Manage submissions, abstracts, and author information.",

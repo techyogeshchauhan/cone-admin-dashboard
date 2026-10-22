@@ -129,8 +129,10 @@ test("Super Admin deletes records beside Edit, searches logs, and moves back and
   const back = page.getByRole("button", { name: "Go back" });
   const forward = page.getByRole("button", { name: "Go forward" });
   await page.goto("/");
+  await page.getByLabel("Email address", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("fixture-password");
   await page
-    .getByRole("button", { name: "Login as Super Admin", exact: true })
+    .getByRole("button", { name: "Sign in to workspace", exact: true })
     .click();
   await expect(back).toBeDisabled();
   await expect(forward).toBeDisabled();

@@ -101,8 +101,10 @@ test("participants load a page at a time and are searched on the server", async 
     return route.fulfill({ json: { rows: [], next: null } });
   });
   await page.goto("/");
+  await page.getByLabel("Email address", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("fixture-password");
   await page
-    .getByRole("button", { name: "Login as Super Admin", exact: true })
+    .getByRole("button", { name: "Sign in to workspace", exact: true })
     .click();
   await page
     .getByRole("navigation", { name: "Main navigation" })
