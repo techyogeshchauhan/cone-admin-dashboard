@@ -51,6 +51,7 @@ import {
   GraduationCap,
   Layers,
   Ticket,
+  FlaskConical,
 } from "lucide-react";
 import { auth, configured, request } from "./firebase";
 const EmailCenter = lazy(() => import("./EmailCenter"));
@@ -76,6 +77,7 @@ import RoleWorkspace, {
 } from "./RoleWorkspace";
 const ParticipantWorkspace = lazy(() => import("./ParticipantWorkspace"));
 const ControlCenter = lazy(() => import("./ControlCenter"));
+const TestAccounts = lazy(() => import("./TestAccounts"));
 import {
   can,
   conferenceRoles,
@@ -259,6 +261,13 @@ const navigation = [
     key: "users",
     icon: ShieldCheck,
     permission: "users",
+  },
+  // No role grants this, so only Super Admin sees it.
+  {
+    label: "Test accounts",
+    key: "testAccounts",
+    icon: FlaskConical,
+    permission: "testAccounts",
   },
   {
     label: "Programme",
@@ -852,6 +861,8 @@ export default function App() {
                     participantFilter={participantFilter}
                     clearFilter={() => setParticipantFilter({})}
                   />
+                ) : page === "testAccounts" ? (
+                  <TestAccounts />
                 ) : page === "imports" ? (
                   <ImportCenter />
                 ) : page === "media" ? (

@@ -60,6 +60,7 @@ describe("SMTP email worker", () => {
         to: "recipient@example.org",
         subject: "Welcome",
         text: "Hello Alice",
+        html: expect.stringContaining("Hello Alice"),
       }),
     );
     expect(update).toHaveBeenCalledWith(

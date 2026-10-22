@@ -7,14 +7,17 @@ import { recordAudit } from "./activity-log.js";
 import { identitySchema, normalizedName } from "./email-otp.js";
 import { mobile, type Actor } from "../shared/schema.js";
 
-// A registration a Super Admin marks with accountType "test" signs in to the
-// mobile app with its name, email and mobile alone: no emailed code. Every
-// other registration still uses email OTP.
+// A registration a Super Admin adds to the testAccounts collection signs in to
+// the mobile app with its name, email and mobile alone: no emailed code.
+// Every other registration still uses email OTP. people/{email}.accountType
+// mirrors membership for the participant list; both change in one
+// transaction, and login requires both.
 const fail = (message: string, status: number) =>
   Object.assign(new Error(message), { status });
+const loginEnabled = () => process.env.ALLOW_TEST_ACCOUNT_LOGIN === "true";
 
 export function registerTestAccountLogin(app: Express) {
-  if (process.env.ALLOW_TEST_ACCOUNT_LOGIN !== "true") return;
+  if (!loginEnabled()) return;
   app.post(
     "/api/auth/test-login",
     rateLimit({ windowMs: 60_000, limit: 10 }),
@@ -23,13 +26,18 @@ export function registerTestAccountLogin(app: Express) {
       if (process.env.APP_ENV === "production" && !req.secure)
         return void res.status(400).json({ error: "HTTPS is required" });
       const identity = identitySchema.parse(req.body);
-      const person = (await db.doc(`people/${identity.email}`).get()).data();
+      const [personDoc, testDoc] = await Promise.all([
+        db.doc(`people/${identity.email}`).get(),
+        db.doc(`testAccounts/${identity.email}`).get(),
+      ]);
+      const person = personDoc.data();
       // The app falls back to email OTP on this answer, so it says nothing
       // about whether the registration exists.
       const notTest = () =>
         void res.status(404).json({ error: "Not a test account" });
       if (
         !person ||
+        !testDoc.exists ||
         person.accountType !== "test" ||
         person.archivedAt ||
         ["cancelled", "suspended"].includes(person.registrationStatus) ||
@@ -53,11 +61,16 @@ export function registerTestAccountLogin(app: Express) {
       const now = Date.now();
       if (!account.emailVerified)
         await auth.updateUser(account.uid, { emailVerified: true });
-      await db.doc(`people/${identity.email}`).update({
-        emailVerified: true,
-        emailVerificationStatus: "Verified",
-        emailVerificationMethod: "test_account",
-      });
+      await Promise.all([
+        db.doc(`people/${identity.email}`).update({
+          emailVerified: true,
+          emailVerificationStatus: "Verified",
+          emailVerificationMethod: "test_account",
+        }),
+        db
+          .doc(`testAccounts/${identity.email}`)
+          .update({ lastLoginAt: new Date(now).toISOString() }),
+      ]);
       const token = await auth.createCustomToken(account.uid, {
         login_method: "test_account",
         login_audience: "mobile",
@@ -74,23 +87,54 @@ export function registerTestAccountLogin(app: Express) {
   );
 }
 
+function superAdmin(req: unknown) {
+  const actor = (req as { actor: Actor }).actor;
+  if (actor.role !== "superadmin")
+    throw fail("Only Super Admin can manage test accounts", 403);
+  return actor;
+}
+
 // Registered after the dashboard authentication middleware.
 export function registerTestAccountAdmin(app: Express) {
+  app.get("/api/test-accounts", async (req, res) => {
+    superAdmin(req);
+    const snapshot = await db.collection("testAccounts").orderBy("email").get();
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      loginEnabled: loginEnabled(),
+      rows: snapshot.docs.map((d) => ({ id: d.id, ...d.data() })),
+    });
+  });
   app.put("/api/people/:email/test-account", async (req, res) => {
-    const actor = (req as unknown as { actor: Actor }).actor;
-    if (actor.role !== "superadmin")
-      throw fail("Only Super Admin can change test accounts", 403);
+    const actor = superAdmin(req);
     const email = z.email().parse(req.params.email).toLowerCase();
     const { enabled } = z
       .object({ enabled: z.boolean() })
       .strict()
       .parse(req.body);
-    const ref = db.doc(`people/${email}`);
-    if (!(await ref.get()).exists) throw fail("Participant not found", 404);
-    await ref.update({
-      accountType: enabled ? "test" : FieldValue.delete(),
-      updatedAt: new Date().toISOString(),
-      updatedBy: actor.uid,
+    const personRef = db.doc(`people/${email}`),
+      testRef = db.doc(`testAccounts/${email}`);
+    const now = new Date().toISOString();
+    await db.runTransaction(async (tx) => {
+      const person = (await tx.get(personRef)).data();
+      if (!person || person.archivedAt)
+        throw fail("No active participant with this email", 404);
+      tx.update(personRef, {
+        accountType: enabled ? "test" : FieldValue.delete(),
+        updatedAt: now,
+        updatedBy: actor.uid,
+      });
+      if (enabled)
+        tx.set(testRef, {
+          email,
+          fullName: person.fullName,
+          mobile: person.mobile,
+          role: person.role,
+          addedAt: now,
+          addedBy: actor.uid,
+          addedByName: actor.fullName,
+        });
+      else tx.delete(testRef);
     });
     // Ending the flag also ends sessions it already granted.
     if (!enabled) {

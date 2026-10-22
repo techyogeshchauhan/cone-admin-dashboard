@@ -105,6 +105,9 @@ describe("email OTP authentication", () => {
     );
     expect(result).not.toHaveProperty("token");
     expect(JSON.stringify(result)).not.toContain(code());
+    const delivered = m.sendMail.mock.calls.at(-1)![0];
+    expect(delivered.html).toContain(`>${code()}</div>`);
+    expect(delivered.html).toContain("5 minutes");
     const stored = records.get(`authChallenges/${result.challengeId}`);
     expect(stored.hash).toHaveLength(64);
     expect(JSON.stringify(stored)).not.toContain(`"${code()}"`);

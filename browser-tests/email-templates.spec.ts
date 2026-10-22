@@ -119,8 +119,10 @@ test("Super Admin adds role templates and queues a presenter email to active pre
     return route.fulfill({ json: [] });
   });
   await page.goto("/");
+  await page.getByLabel("Email address", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("fixture-password");
   await page
-    .getByRole("button", { name: "Login as Super Admin", exact: true })
+    .getByRole("button", { name: "Sign in to workspace", exact: true })
     .click();
   await page
     .getByRole("navigation", { name: "Main navigation" })
@@ -140,7 +142,29 @@ test("Super Admin adds role templates and queues a presenter email to active pre
   expect(presenterQueries.at(-1)).toContain("role=presenter");
   expect(presenterQueries.at(-1)).toContain("excludeDemo=true");
   await expect(page.getByText("Preview for Kiran Joshi")).toBeVisible();
-  await expect(page.getByText("Paper: Glacier Lake Monitoring")).toBeVisible();
+  const preview = page.frameLocator('iframe[title="Email design preview"]');
+  await expect(
+    preview.getByText("Glacier Lake Monitoring", { exact: true }),
+  ).toBeVisible();
+  await expect(preview.getByRole("heading", { level: 1 })).toContainText(
+    "presentation at",
+  );
+  await page.getByText("Sign-in code email preview", { exact: true }).click();
+  const otp = page.frameLocator('iframe[title="Sign-in code email preview"]');
+  await expect(otp.getByText("123456", { exact: true })).toBeVisible();
+  await expect(
+    otp.getByText("Keep this code private.", { exact: false }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const title of ["Email design preview", "Sign-in code email preview"]) {
+    const frame = page.frameLocator(`iframe[title="${title}"]`);
+    await expect(frame.locator("body")).toBeVisible();
+    expect(
+      await frame
+        .locator("html")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth),
+    ).toBe(true);
+  }
 
   await page.getByRole("button", { name: "Queue notifications" }).click();
   await expect(page.getByText("Messages queued.")).toBeVisible();

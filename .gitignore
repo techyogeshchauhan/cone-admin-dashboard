@@ -8,3 +8,6 @@ storage/
 test-results/
 playwright-report/
 firebase-service-account.json
+
+# Local source workbook contains participant details.
+/USSTC 21 Final116 (1).xlsx

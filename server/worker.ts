@@ -4,6 +4,8 @@ import { db } from "./firebase.js";
 import { mailTransport, sender } from "./mail.js";
 import { runtimeConfiguration } from "./control.js";
 import { firebaseOutage } from "./firebase-errors.js";
+import { renderEmail } from "../shared/email-design.js";
+import { emailBranding } from "./email-branding.js";
 let stopping = false;
 // Ends the wait between polls at once when the worker is asked to stop.
 let wake = () => {};
@@ -69,6 +71,11 @@ export async function tick() {
         to: job.recipient,
         subject: job.subject,
         text,
+        html: renderEmail({
+          subject: String(job.subject),
+          text,
+          brand: await emailBranding(),
+        }),
         messageId: `<${document.id}@cone.local>`,
       });
       await document.ref.update({

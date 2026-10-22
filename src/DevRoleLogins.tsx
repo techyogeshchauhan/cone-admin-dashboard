@@ -17,24 +17,27 @@ export default function DevRoleLogins({
       <h2 id="dev-role-title">Choose a dashboard to test</h2>
       <p>Use an existing test account with one click.</p>
       <div className="dev-role-list">
-        {dashboardTestRoles.map(({ role, label, description }) => (
-          <div className="dev-role-row" key={role}>
-            <div>
-              <strong>{label}</strong>
-              <small>{description}</small>
+        {/* Super Admin signs in through the normal email/password form. */}
+        {dashboardTestRoles
+          .filter(({ role }) => role !== "superadmin")
+          .map(({ role, label, description }) => (
+            <div className="dev-role-row" key={role}>
+              <div>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </div>
+              <button
+                type="button"
+                className="secondary"
+                aria-label={`Login as ${label}`}
+                disabled={busy}
+                onClick={() => void onLogin(role)}
+              >
+                Login
+                <ArrowUpRight size={14} />
+              </button>
             </div>
-            <button
-              type="button"
-              className="secondary"
-              aria-label={`Login as ${label}`}
-              disabled={busy}
-              onClick={() => void onLogin(role)}
-            >
-              Login
-              <ArrowUpRight size={14} />
-            </button>
-          </div>
-        ))}
+          ))}
       </div>
       <p className="dev-role-footnote">
         Temporary local shortcuts. Normal login is available above.

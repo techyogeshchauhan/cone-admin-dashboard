@@ -67,8 +67,10 @@ test("going back from the dashboard asks, signs out, and forward needs a new sig
     "data:text/html,<title>Search</title><h1>Search results</h1>",
   );
   await page.goto("/");
+  await page.getByLabel("Email address", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("fixture-password");
   await page
-    .getByRole("button", { name: "Login as Super Admin", exact: true })
+    .getByRole("button", { name: "Sign in to workspace", exact: true })
     .click();
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav).toBeVisible();

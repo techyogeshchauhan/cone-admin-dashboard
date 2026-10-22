@@ -349,7 +349,9 @@ controlRouter.post("/users/:uid/action", async (req, res) => {
         value.action === "password_reset"
           ? "CONE password reset"
           : "CONE email verification",
-      body: `Hello {{name}},\n\nComplete your account action here:\n${link}`,
+      body: value.action === "password_reset"
+        ? `Hello {{name}},\n\nA password reset was requested for your CONE dashboard account. Use the secure link below to choose a new password.\n\nReset your password:\n${link}\n\nIf you did not request this change, you can ignore this email. Your password will stay the same.\n\nFor your security, do not forward this email or share this link.`
+        : `Hello {{name}},\n\nPlease confirm your email address to complete verification for your CONE dashboard account.\n\nVerify your email:\n${link}\n\nIf you were not expecting this email, you can safely ignore it.\n\nFor your security, do not forward this email or share this link.`,
       status: "queued",
       attempts: 0,
       createdBy: actor.uid,
