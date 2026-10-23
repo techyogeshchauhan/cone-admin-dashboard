@@ -702,22 +702,22 @@ table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 11px;
+  font-size: 13px;
 }
 th {
-  color: #8d9b87;
+  color: #0f172a;
   background: #f7f9f5;
-  font-size: 9px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   padding: 13px 12px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
   white-space: nowrap;
 }
 td {
-  padding: 17px 12px;
+  padding: 16px 12px;
   border-bottom: 1px solid #edf1e9;
-  color: #7b8974;
+  color: #0f172a;
   max-width: 330px;
   overflow-wrap: anywhere;
 }

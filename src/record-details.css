@@ -71,8 +71,8 @@
   align-items: center;
   justify-content: space-between;
   margin-top: 18px;
-  font-size: 12px;
-  color: #5e7586;
+  font-size: 13px;
+  color: #0f172a;
 }
 .record-pagination > div {
   display: flex;
@@ -111,8 +111,16 @@
   margin: 12px 0;
   overflow-wrap: anywhere;
 }
+.department-authors .panel-heading p {
+  color: #334155;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
 .department-author-search {
   max-width: 520px;
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 600;
 }
 .department-author-table {
   max-height: 45dvh;
@@ -121,20 +129,29 @@
 }
 .department-author-table table {
   min-width: 760px;
+  font-size: 13px;
 }
 .department-author-table th {
   position: sticky;
   top: 0;
   z-index: 1;
+  font-size: 12px;
+  font-weight: 650;
+  color: #0f172a;
+  background: #f1f5f9;
+  letter-spacing: 0.5px;
 }
 .department-author-table td {
   white-space: nowrap;
+  font-size: 13px;
+  color: #0f172a;
 }
 .department-cell-preview {
   display: block;
-  max-width: 240px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #0f172a;
 }
 .department-author-details {
   padding: 12px 18px;
