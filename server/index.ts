@@ -558,13 +558,54 @@ const overviews = memo<Record<string, unknown>>({ tags: ["overview"] });
 async function overview(access: ReturnType<typeof overviewAccess>) {
   const [people, redemptions, imports, fees] = await Promise.all([
     access.people
-      ? db.runTransaction(
-          (tx) =>
-            registrationCounts(db.collection("people"), (query) =>
-              tx.get(query),
-            ),
-          { readOnly: true },
-        )
+      ? db
+          .runTransaction(
+            (tx) =>
+              registrationCounts(db.collection("people"), (query) =>
+                tx.get(query),
+              ),
+            { readOnly: true },
+          )
+          .catch(async (error: unknown) => {
+            const code = (error as { code?: unknown })?.code;
+            const message = (error as { message?: string })?.message || "";
+            if (
+              code === 9 ||
+              String(code) === "9" ||
+              message.includes("requires an index")
+            ) {
+              const snapshot = await db
+                .collection("people")
+                .select("isDemo", "archivedAt", "registrationStatus", "role")
+                .get();
+              const rows = snapshot.docs
+                .map((d) => d.data())
+                .filter((d) => !d.isDemo && !d.archivedAt);
+              const roles = [
+                "presenter",
+                "attendee",
+                "speaker",
+                "vip",
+                "organiser",
+                "volunteer",
+              ];
+              const byRole = Object.fromEntries(
+                roles.map((role) => [
+                  role,
+                  rows.filter((p) => p.role === role).length,
+                ]),
+              );
+              return {
+                registrations: rows.length,
+                confirmed: rows.filter(
+                  (p) => p.registrationStatus === "confirmed",
+                ).length,
+                presenters: byRole.presenter,
+                byRole,
+              };
+            }
+            throw error;
+          })
       : null,
     access.meals ? db.collection("mealRedemptions").count().get() : null,
     access.imports
@@ -2514,7 +2555,7 @@ app.use(
         ? 404
         : err.code === "auth/email-already-exists"
           ? 409
-          : err.code?.startsWith("auth/")
+          : typeof err.code === "string" && err.code.startsWith("auth/")
             ? 400
             : 500);
     if (status === 500) console.error(error);

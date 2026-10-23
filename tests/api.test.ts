@@ -64,6 +64,22 @@ describe("API authorization before administrative writes", () => {
     expect(response.status).toBe(503);
     expect(response.body.error).toMatch(/quota or rate exhaustion/);
   });
+  it("handles non-string error codes without throwing startsWith TypeError", async () => {
+    mocks.doc.mockImplementation(() => ({
+      get: vi.fn().mockRejectedValue(
+        Object.assign(new Error("9 FAILED_PRECONDITION: Index missing"), {
+          code: 9,
+        }),
+      ),
+    }));
+    const response = await api
+      .get("/api/me")
+      .set("Authorization", "Bearer token");
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe(
+      "The operation could not be completed. Check server configuration and logs.",
+    );
+  });
   it("permits a basic liveness check without Firebase credentials", async () => {
     expect((await api.get("/api/health")).status).toBe(200);
     expect(mocks.verify).not.toHaveBeenCalled();
